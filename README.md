@@ -48,3 +48,4 @@ API backend:
 Nota:
 
 - El frontend usa proxy de Vite para enviar /api al backend, por eso los componentes React usan rutas relativas.
+probando para dans
