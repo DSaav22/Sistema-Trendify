@@ -3,16 +3,23 @@ from rest_framework.routers import DefaultRouter
 
 # Importa los ViewSets desde views.py de la app catalogos.
 from .views import (
+    BitacoraViewSet,
+    CategoriaPublicaViewSet,
     CategoriaViewSet,
+    CheckoutPublicoView,
     ClienteViewSet,
     InventarioViewSet,
     MarcaViewSet,
     MovimientoInventarioViewSet,
+    ProductoPublicoViewSet,
     ProductoViewSet,
     ProveedorViewSet,
     RolViewSet,
     UsuarioViewSet,
+    VentaViewSet,
+    MisPedidosView,
 )
+from .views_auth import CambiarPasswordView, LoginView, LogoutView, RegistroClienteView
 
 router = DefaultRouter()
 router.register(r'roles', RolViewSet, basename='rol')
@@ -24,8 +31,21 @@ router.register(r'proveedores', ProveedorViewSet, basename='proveedor')
 router.register(r'productos', ProductoViewSet, basename='producto')
 router.register(r'inventario', InventarioViewSet, basename='inventario')
 router.register(r'movimientos', MovimientoInventarioViewSet, basename='movimiento-inventario')
+router.register(r'bitacora', BitacoraViewSet, basename='bitacora')
+router.register(r'ventas', VentaViewSet, basename='venta')
+
+public_router = DefaultRouter()
+public_router.register(r'categorias', CategoriaPublicaViewSet, basename='categoria-publica')
+public_router.register(r'productos', ProductoPublicoViewSet, basename='producto-publico')
 
 urlpatterns = [
     # Habilita endpoints CRUD automaticos de DRF.
+    path('auth/registro/', RegistroClienteView.as_view(), name='auth-registro'),
+    path('auth/login/', LoginView.as_view(), name='auth-login'),
+    path('auth/logout/', LogoutView.as_view(), name='auth-logout'),
+    path('auth/cambiar-password/', CambiarPasswordView.as_view(), name='auth-cambiar-password'),
+    path('mis-pedidos/', MisPedidosView.as_view(), name='mis-pedidos'),
+    path('public/checkout/', CheckoutPublicoView.as_view(), name='checkout-publico'),
+    path('public/', include(public_router.urls)),
     path('', include(router.urls)),
 ]

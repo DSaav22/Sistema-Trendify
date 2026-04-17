@@ -53,7 +53,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'cosmetica_sistema',
         'USER': 'postgres',
-        'PASSWORD': os.getenv('POSTGRES_PASSWORD', ''),
+        'PASSWORD': 'diego',
         'HOST': '127.0.0.1',
         'PORT': '5432',
     }
@@ -66,11 +66,20 @@ AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
-LANGUAGE_CODE = 'es-ec'
-TIME_ZONE = 'America/Guayaquil'
+LANGUAGE_CODE = 'es-bo'
+TIME_ZONE = 'America/La_Paz'
 USE_I18N = True
-USE_TZ = True
+USE_TZ = False
 
 STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'catalogos.authentication.CustomJWTAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+}

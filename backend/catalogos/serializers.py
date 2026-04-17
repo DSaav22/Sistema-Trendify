@@ -2,8 +2,10 @@ from rest_framework import serializers
 
 # Importa los modelos desde models.py de la app catalogos.
 from .models import (
+    Bitacora,
     Categoria,
     Cliente,
+    DetalleVenta,
     Inventario,
     Marca,
     MovimientoInventario,
@@ -11,6 +13,7 @@ from .models import (
     Proveedor,
     Rol,
     Usuario,
+    Venta,
 )
 
 
@@ -32,10 +35,36 @@ class MarcaSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
+from django.contrib.auth.hashers import make_password
+from django.db import transaction
+
 class UsuarioSerializer(serializers.ModelSerializer):
     class Meta:
         model = Usuario
         fields = '__all__'
+
+    def create(self, validated_data):
+        from .models import Cliente
+        password = validated_data.get('password_hash')
+        if password:
+            validated_data['password_hash'] = make_password(password)
+
+        with transaction.atomic():
+            usuario = super().create(validated_data)
+            # Make sure Cliente exists if rol is 3
+            if getattr(usuario.id_rol, 'id_rol', None) == 3:
+                Cliente.objects.create(
+                    id_usuario_fk=usuario,
+                    nombre_completo=usuario.nombre_completo,
+                    estado=usuario.estado
+                )
+            return usuario
+
+    def update(self, instance, validated_data):
+        password = validated_data.get('password_hash')
+        if password and not str(password).startswith('pbkdf2_'):
+            validated_data['password_hash'] = make_password(password)
+        return super().update(instance, validated_data)
 
 
 class ClienteSerializer(serializers.ModelSerializer):
@@ -104,3 +133,66 @@ class MovimientoInventarioSerializer(serializers.ModelSerializer):
             'fecha_movimiento',
             'motivo',
         ]
+
+
+class BitacoraSerializer(serializers.ModelSerializer):
+    usuario_nombre = serializers.StringRelatedField(source='id_usuario', read_only=True)
+
+    class Meta:
+        model = Bitacora
+        fields = [
+            'id_bitacora',
+            'id_usuario',
+            'usuario_nombre',
+            'accion',
+            'tabla_afectada',
+            'registro_afectado_id',
+            'detalle',
+            'fecha_hora',
+            'direccion_ip',
+        ]
+
+
+class DetalleVentaInputSerializer(serializers.Serializer):
+    id_producto = serializers.PrimaryKeyRelatedField(queryset=Producto.objects.all())
+    cantidad = serializers.IntegerField(min_value=1)
+
+
+class DetalleVentaSerializer(serializers.ModelSerializer):
+    producto_nombre = serializers.StringRelatedField(source='id_producto', read_only=True)
+
+    class Meta:
+        model = DetalleVenta
+        fields = [
+            'id_detalle_venta',
+            'id_venta',
+            'id_producto',
+            'producto_nombre',
+            'cantidad',
+            'precio_unitario',
+            'subtotal',
+        ]
+
+
+class VentaSerializer(serializers.ModelSerializer):
+    cliente_nombre = serializers.StringRelatedField(source='id_cliente', read_only=True)
+    usuario_nombre = serializers.StringRelatedField(source='id_usuario', read_only=True)
+    detalles = DetalleVentaInputSerializer(many=True, write_only=True)
+    detalles_venta = DetalleVentaSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Venta
+        fields = [
+            'id_venta',
+            'id_cliente',
+            'cliente_nombre',
+            'id_usuario',
+            'usuario_nombre',
+            'fecha_hora',
+            'monto_total',
+            'metodo_pago',
+            'estado_venta',
+            'detalles',
+            'detalles_venta',
+        ]
+        read_only_fields = ['id_usuario', 'fecha_hora', 'monto_total']

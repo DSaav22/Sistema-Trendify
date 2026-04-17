@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import axios from 'axios';
+import api from './src/utils/api';
 
 const API_URL = '/api/categorias/';
 
@@ -16,7 +16,7 @@ export default function CategoriaManager() {
     setError('');
 
     try {
-      const { data } = await axios.get(API_URL);
+      const { data } = await api.get(API_URL);
       setCategorias(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error('Error al cargar categorias:', err);
@@ -41,7 +41,7 @@ export default function CategoriaManager() {
 
     setSaving(true);
     try {
-      await axios.post(API_URL, {
+      await api.post(API_URL, {
         nombre: nombre.trim(),
         descripcion: descripcion.trim(),
         estado: 'activo',
@@ -65,7 +65,7 @@ export default function CategoriaManager() {
     setError('');
 
     try {
-      await axios.delete(`${API_URL}${idCategoria}/`);
+      await api.delete(`${API_URL}${idCategoria}/`);
       setCategorias((prev) => prev.filter((item) => (item.id_categoria ?? item.id) !== idCategoria));
     } catch (err) {
       console.error('Error al eliminar categoria:', err);
@@ -74,8 +74,8 @@ export default function CategoriaManager() {
   };
 
   return (
-    <section className="mx-auto w-full max-w-5xl p-6">
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+    <section className="mx-auto w-full max-w-5xl">
+      <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm">
         <h2 className="mb-4 text-2xl font-bold text-slate-800">Gestion de Categorias</h2>
 
         <form onSubmit={handleSubmit} className="mb-6 grid gap-3 md:grid-cols-3">
@@ -110,8 +110,8 @@ export default function CategoriaManager() {
           </p>
         )}
 
-        <div className="overflow-x-auto">
-          <table className="min-w-full border-collapse text-left text-sm">
+        <div className="overflow-x-auto max-w-full rounded-xl border border-slate-200">
+          <table className="min-w-full border-collapse text-left text-sm whitespace-nowrap">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-slate-700">
                 <th className="px-3 py-2 font-semibold">ID</th>

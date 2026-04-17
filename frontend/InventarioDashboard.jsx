@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import axios from 'axios';
+import api from './src/utils/api';
 
 const API_BASE = '/api';
 const INVENTARIO_URL = `${API_BASE}/inventario/`;
@@ -38,9 +38,9 @@ export default function InventarioDashboard() {
 
     try {
       const [resInventario, resMovimientos, resProductos] = await Promise.all([
-        axios.get(INVENTARIO_URL),
-        axios.get(MOVIMIENTOS_URL),
-        axios.get(PRODUCTOS_URL),
+        api.get(INVENTARIO_URL),
+        api.get(MOVIMIENTOS_URL),
+        api.get(PRODUCTOS_URL),
       ]);
 
       setInventario(Array.isArray(resInventario.data) ? resInventario.data : []);
@@ -88,7 +88,7 @@ export default function InventarioDashboard() {
 
     setSaving(true);
     try {
-      await axios.post(MOVIMIENTOS_URL, {
+      await api.post(MOVIMIENTOS_URL, {
         id_producto: Number(formData.id_producto),
         tipo_movimiento: formData.tipo_movimiento,
         cantidad: Number(formData.cantidad),
@@ -107,9 +107,9 @@ export default function InventarioDashboard() {
   };
 
   return (
-    <section className="mx-auto w-full max-w-7xl p-6">
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold text-slate-800">Inventario Dashboard</h2>
+    <section className="mx-auto w-full max-w-7xl">
+      <div className="mb-4 sm:mb-6">
+        <h2 className="text-xl sm:text-2xl font-bold text-slate-800">Inventario Dashboard</h2>
         <p className="mt-1 text-sm text-slate-500">Control de stock, alertas y registro de movimientos.</p>
       </div>
 
@@ -117,12 +117,12 @@ export default function InventarioDashboard() {
         <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h3 className="mb-4 text-lg font-semibold text-slate-800">Estado Actual del Inventario</h3>
+      <div className="grid gap-4 sm:gap-6 lg:grid-cols-2">
+        <article className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
+          <h3 className="mb-4 text-base sm:text-lg font-semibold text-slate-800">Estado Actual del Inventario</h3>
 
-          <div className="overflow-x-auto rounded-xl border border-slate-200">
-            <table className="min-w-full text-left text-sm">
+          <div className="overflow-x-auto rounded-xl border border-slate-200 max-w-full">
+            <table className="min-w-full text-left text-sm whitespace-nowrap">
               <thead className="bg-slate-50 text-slate-700">
                 <tr>
                   <th className="px-4 py-3 font-semibold">Producto</th>
@@ -173,7 +173,7 @@ export default function InventarioDashboard() {
           </div>
         </article>
 
-        <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <article className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
           <h3 className="mb-4 text-lg font-semibold text-slate-800">Registrar Movimiento</h3>
 
           <form onSubmit={handleSubmitMovimiento} className="grid gap-3">
@@ -240,7 +240,7 @@ export default function InventarioDashboard() {
           <div className="mt-6">
             <h4 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-600">Ultimos Movimientos</h4>
             <div className="max-h-64 overflow-auto rounded-lg border border-slate-200">
-              <table className="min-w-full text-left text-xs">
+              <table className="min-w-full text-left text-xs whitespace-nowrap">
                 <thead className="bg-slate-50 text-slate-600">
                   <tr>
                     <th className="px-3 py-2 font-semibold">Producto</th>

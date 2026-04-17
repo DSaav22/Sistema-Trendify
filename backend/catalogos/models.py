@@ -61,6 +61,14 @@ class Usuario(models.Model):
     def __str__(self):
         return self.nombre_completo
 
+    @property
+    def is_authenticated(self):
+        return True
+
+    @property
+    def is_anonymous(self):
+        return False
+
     class Meta:
         db_table = 'usuarios'
         verbose_name_plural = 'Usuarios'
@@ -72,6 +80,12 @@ class Cliente(models.Model):
     telefono = models.CharField(max_length=25, blank=True, null=True)
     ciudad = models.CharField(max_length=100, blank=True, null=True)
     direccion = models.TextField(blank=True, null=True)
+    id_usuario_fk = models.ForeignKey(
+        'Usuario', 
+        on_delete=models.SET_NULL, 
+        null=True, blank=True, 
+        db_column='id_usuario_fk'
+    )
     es_top = models.BooleanField(default=False)
     estado = models.CharField(max_length=20)
     creado_en = models.DateTimeField(auto_now_add=True)
@@ -174,6 +188,85 @@ class MovimientoInventario(models.Model):
     class Meta:
         db_table = 'movimientos_inventario'
         verbose_name_plural = 'Movimientos de Inventario'
+
+
+class Venta(models.Model):
+    id_venta = models.AutoField(primary_key=True)
+    id_cliente = models.ForeignKey(
+        Cliente,
+        on_delete=models.PROTECT,
+        db_column='id_cliente',
+        related_name='ventas'
+    )
+    id_usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.PROTECT,
+        db_column='id_usuario',
+        related_name='ventas'
+    )
+    fecha_hora = models.DateTimeField()
+    monto_total = models.DecimalField(max_digits=12, decimal_places=2)
+    metodo_pago = models.CharField(max_length=30)
+    estado_venta = models.CharField(max_length=20)
+
+    def __str__(self):
+        return f'Venta #{self.id_venta}'
+
+    class Meta:
+        db_table = 'ventas'
+        verbose_name_plural = 'Ventas'
+        managed = False
+
+
+class DetalleVenta(models.Model):
+    id_detalle_venta = models.AutoField(primary_key=True)
+    id_venta = models.ForeignKey(
+        Venta,
+        on_delete=models.CASCADE,
+        db_column='id_venta',
+        related_name='detalles_venta'
+    )
+    id_producto = models.ForeignKey(
+        Producto,
+        on_delete=models.PROTECT,
+        db_column='id_producto',
+        related_name='detalles_venta'
+    )
+    cantidad = models.IntegerField()
+    precio_unitario = models.DecimalField(max_digits=12, decimal_places=2)
+    subtotal = models.DecimalField(max_digits=12, decimal_places=2)
+
+    def __str__(self):
+        return f'Detalle venta #{self.id_detalle_venta}'
+
+    class Meta:
+        db_table = 'detalles_venta'
+        verbose_name_plural = 'Detalles de Venta'
+        managed = False
+
+
+class Bitacora(models.Model):
+    id_bitacora = models.AutoField(primary_key=True)
+    id_usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.PROTECT,
+        db_column='id_usuario',
+        related_name='bitacoras'
+    )
+    accion = models.CharField(max_length=50)
+    tabla_afectada = models.CharField(max_length=100)
+    registro_afectado_id = models.IntegerField(blank=True, null=True)
+    detalle = models.TextField(blank=True, null=True)
+    fecha_hora = models.DateTimeField()
+    direccion_ip = models.CharField(max_length=45, blank=True, null=True)
+
+    def __str__(self):
+        return f'{self.accion} - {self.tabla_afectada}'
+
+    class Meta:
+        db_table = 'bitacora'
+        verbose_name_plural = 'Bitacora'
+        managed = False
 
 
 @receiver(post_save, sender=MovimientoInventario)

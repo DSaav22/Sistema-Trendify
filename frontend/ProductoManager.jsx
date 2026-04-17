@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import axios from 'axios';
+import api from './src/utils/api';
 
 const API_BASE = '/api';
 const PRODUCTOS_URL = `${API_BASE}/productos/`;
@@ -41,9 +41,9 @@ export default function ProductoManager() {
 
     try {
       const [resProductos, resCategorias, resMarcas] = await Promise.all([
-        axios.get(PRODUCTOS_URL),
-        axios.get(CATEGORIAS_URL),
-        axios.get(MARCAS_URL),
+        api.get(PRODUCTOS_URL),
+        api.get(CATEGORIAS_URL),
+        api.get(MARCAS_URL),
       ]);
 
       setProductos(Array.isArray(resProductos.data) ? resProductos.data : []);
@@ -92,7 +92,7 @@ export default function ProductoManager() {
 
     setSaving(true);
     try {
-      await axios.post(PRODUCTOS_URL, {
+      await api.post(PRODUCTOS_URL, {
         nombre: formData.nombre.trim(),
         descripcion: formData.descripcion.trim(),
         precio_compra: formData.precio_compra,
@@ -119,7 +119,7 @@ export default function ProductoManager() {
 
     setError('');
     try {
-      await axios.delete(`${PRODUCTOS_URL}${idProducto}/`);
+      await api.delete(`${PRODUCTOS_URL}${idProducto}/`);
       setProductos((prev) => prev.filter((p) => (p.id_producto ?? p.id) !== idProducto));
     } catch (err) {
       console.error('Error al eliminar producto:', err);
@@ -128,8 +128,8 @@ export default function ProductoManager() {
   };
 
   return (
-    <section className="mx-auto w-full max-w-7xl p-6">
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+    <section className="mx-auto w-full max-w-7xl">
+      <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm">
         <header className="mb-5">
           <h2 className="text-2xl font-bold text-slate-800">Gestion de Productos</h2>
           <p className="mt-1 text-sm text-slate-500">Core del negocio: alta y control del catalogo de productos.</p>
@@ -227,8 +227,8 @@ export default function ProductoManager() {
           <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
         )}
 
-        <div className="overflow-x-auto rounded-xl border border-slate-200">
-          <table className="min-w-full text-left text-sm">
+        <div className="overflow-x-auto max-w-full rounded-xl border border-slate-200">
+          <table className="min-w-full text-left text-sm whitespace-nowrap">
             <thead className="bg-slate-50 text-slate-700">
               <tr>
                 <th className="px-4 py-3 font-semibold">Nombre</th>
