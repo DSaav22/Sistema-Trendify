@@ -5,6 +5,8 @@ from .models import (
     Bitacora,
     Categoria,
     Cliente,
+    Compra,
+    DetalleCompra,
     DetalleVenta,
     Inventario,
     Marca,
@@ -174,6 +176,55 @@ class DetalleVentaSerializer(serializers.ModelSerializer):
         ]
 
 
+class DetalleCompraInputSerializer(serializers.Serializer):
+    id_producto = serializers.PrimaryKeyRelatedField(queryset=Producto.objects.all())
+    cantidad = serializers.IntegerField(min_value=1)
+    precio_unitario = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0)
+    lote = serializers.CharField(max_length=50, required=False, allow_blank=True, allow_null=True)
+    fecha_vencimiento = serializers.DateField(required=False, allow_null=True)
+
+
+class DetalleCompraSerializer(serializers.ModelSerializer):
+    producto_nombre = serializers.StringRelatedField(source='id_producto', read_only=True)
+
+    class Meta:
+        model = DetalleCompra
+        fields = [
+            'id_detalle_compra',
+            'id_compra',
+            'id_producto',
+            'producto_nombre',
+            'lote',
+            'fecha_vencimiento',
+            'cantidad',
+            'precio_unitario',
+            'subtotal',
+        ]
+
+
+class CompraSerializer(serializers.ModelSerializer):
+    proveedor_nombre = serializers.StringRelatedField(source='id_proveedor', read_only=True)
+    usuario_nombre = serializers.StringRelatedField(source='id_usuario', read_only=True)
+    detalles = DetalleCompraInputSerializer(many=True, write_only=True)
+    detalles_compra = DetalleCompraSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Compra
+        fields = [
+            'id_compra',
+            'id_proveedor',
+            'proveedor_nombre',
+            'id_usuario',
+            'usuario_nombre',
+            'fecha_compra',
+            'monto_total',
+            'estado_compra',
+            'detalles',
+            'detalles_compra',
+        ]
+        read_only_fields = ['id_usuario', 'fecha_compra', 'monto_total']
+
+
 class VentaSerializer(serializers.ModelSerializer):
     cliente_nombre = serializers.StringRelatedField(source='id_cliente', read_only=True)
     usuario_nombre = serializers.StringRelatedField(source='id_usuario', read_only=True)
@@ -192,7 +243,11 @@ class VentaSerializer(serializers.ModelSerializer):
             'monto_total',
             'metodo_pago',
             'estado_venta',
+            'monto_recibido',
+            'vuelto',
+            'numero_comprobante',
+            'imagen_qr_url',
             'detalles',
             'detalles_venta',
         ]
-        read_only_fields = ['id_usuario', 'fecha_hora', 'monto_total']
+        read_only_fields = ['id_usuario', 'fecha_hora', 'monto_total', 'vuelto']

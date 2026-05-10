@@ -1,0 +1,29 @@
+# Secrets de despliegue
+.deploy.local
+.env
+.env.local
+*.env.production.real
+
+# Python
+backend/.venv/
+**/__pycache__/
+*.pyc
+*.pyo
+backend/staticfiles/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Archivos locales de desarrollo
+CLAUDE.md
+.claude/
+

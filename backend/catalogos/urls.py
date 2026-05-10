@@ -8,12 +8,14 @@ from .views import (
     CategoriaViewSet,
     CheckoutPublicoView,
     ClienteViewSet,
+    CompraViewSet,
     InventarioViewSet,
     MarcaViewSet,
     MovimientoInventarioViewSet,
     ProductoPublicoViewSet,
     ProductoViewSet,
     ProveedorViewSet,
+    ReciboVentaView,
     RolViewSet,
     UsuarioViewSet,
     VentaViewSet,
@@ -33,6 +35,7 @@ router.register(r'inventario', InventarioViewSet, basename='inventario')
 router.register(r'movimientos', MovimientoInventarioViewSet, basename='movimiento-inventario')
 router.register(r'bitacora', BitacoraViewSet, basename='bitacora')
 router.register(r'ventas', VentaViewSet, basename='venta')
+router.register(r'compras', CompraViewSet, basename='compra')
 
 public_router = DefaultRouter()
 public_router.register(r'categorias', CategoriaPublicaViewSet, basename='categoria-publica')
@@ -45,6 +48,7 @@ urlpatterns = [
     path('auth/logout/', LogoutView.as_view(), name='auth-logout'),
     path('auth/cambiar-password/', CambiarPasswordView.as_view(), name='auth-cambiar-password'),
     path('mis-pedidos/', MisPedidosView.as_view(), name='mis-pedidos'),
+    path('ventas/<int:pk>/recibo/', ReciboVentaView.as_view(), name='venta-recibo'),
     path('public/checkout/', CheckoutPublicoView.as_view(), name='checkout-publico'),
     path('public/', include(public_router.urls)),
     path('', include(router.urls)),

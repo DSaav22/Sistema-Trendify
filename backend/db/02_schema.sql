@@ -63,7 +63,12 @@ CREATE TABLE clientes (
     direccion TEXT,
     es_top BOOLEAN NOT NULL DEFAULT FALSE,
     estado VARCHAR(20) NOT NULL,
-    creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    id_usuario_fk INTEGER NULL,
+    CONSTRAINT fk_clientes_usuarios
+        FOREIGN KEY (id_usuario_fk) REFERENCES usuarios(id_usuario)
+        ON UPDATE CASCADE
+        ON DELETE SET NULL
 );
 
 CREATE TABLE proveedores (
@@ -181,6 +186,10 @@ CREATE TABLE ventas (
     monto_total NUMERIC(12,2) NOT NULL,
     metodo_pago VARCHAR(30) NOT NULL,
     estado_venta VARCHAR(20) NOT NULL,
+    monto_recibido NUMERIC(12,2),
+    vuelto NUMERIC(12,2),
+    numero_comprobante VARCHAR(100),
+    imagen_qr_url VARCHAR(255),
     CONSTRAINT fk_ventas_clientes
         FOREIGN KEY (id_cliente) REFERENCES clientes(id_cliente)
         ON UPDATE CASCADE

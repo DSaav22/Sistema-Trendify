@@ -54,10 +54,10 @@ class RegistroClienteView(APIView):
         if Usuario.objects.filter(username=username).exists():
             return Response({'detail': 'El nombre de usuario (email) ya esta en uso.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Buscar el Rol de Cliente (id_rol = 3)
-        rol_cliente = Rol.objects.filter(id_rol=3).first()
+        # Buscar el Rol de Cliente (id_rol = 6)
+        rol_cliente = Rol.objects.filter(id_rol=6).first()
         if not rol_cliente:
-            rol_cliente = Rol.objects.create(id_rol=3, nombre_rol='Cliente', descripcion='Cliente Online o Externo')
+            rol_cliente = Rol.objects.create(id_rol=6, nombre_rol='Cliente', descripcion='Cliente final que compra en la tienda online.')
 
         from django.db import transaction
         with transaction.atomic():

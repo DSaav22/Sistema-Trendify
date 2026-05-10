@@ -2,7 +2,13 @@ import axios from 'axios';
 
 export const AUTH_STORAGE_KEY = 'si.auth.session';
 
-const api = axios.create();
+// En dev: vacio -> Vite proxy maneja /api hacia 127.0.0.1:8000.
+// En prod: VITE_API_BASE_URL apunta a la URL absoluta de Cloud Run.
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+
+const api = axios.create({
+  baseURL: API_BASE_URL,
+});
 
 function readSession() {
   try {

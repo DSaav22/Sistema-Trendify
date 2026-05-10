@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../utils/api';
 import Login from './Login';
+import ProductoImagen from './ProductoImagen';
 
 const PUBLIC_PRODUCTOS_URL = '/api/public/productos/';
 const PUBLIC_CATEGORIAS_URL = '/api/public/categorias/';
@@ -309,9 +310,11 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
           <div className="grid gap-5 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
             {productosFiltrados.map((producto) => (
                 <article key={producto.id_producto} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-1 hover:shadow-lg flex flex-row sm:flex-col items-center sm:items-stretch">
-                  <div className="w-1/3 sm:w-full h-28 sm:h-40 flex items-center justify-center bg-gradient-to-br from-fuchsia-50 to-amber-50">
-                    <div className="h-16 w-16 sm:h-20 sm:w-20 rounded-2xl bg-white/80 flex items-center justify-center text-xl font-black text-slate-700 shadow-sm">{(producto.nombre || '?').charAt(0).toUpperCase()}</div>
-                  </div>
+                  <ProductoImagen
+                    idProducto={producto.id_producto}
+                    nombre={producto.nombre}
+                    className="w-1/3 sm:w-full h-28 sm:h-40 shrink-0"
+                  />
                   <div className="w-2/3 sm:w-full p-4 flex flex-col justify-between h-full">
                     <div>
                       <h4 className="line-clamp-2 text-sm sm:text-base font-bold text-slate-900">{producto.nombre}</h4>

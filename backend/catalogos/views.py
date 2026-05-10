@@ -1,6 +1,10 @@
 from decimal import Decimal
+from io import BytesIO
 
 from django.db import transaction
+from django.http import HttpResponse, Http404
+from django.shortcuts import get_object_or_404
+from django.template.loader import render_to_string
 from django.utils import timezone
 from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
@@ -12,6 +16,8 @@ from .models import (
     Bitacora,
     Categoria,
     Cliente,
+    Compra,
+    DetalleCompra,
     DetalleVenta,
     Inventario,
     Marca,
@@ -26,6 +32,7 @@ from .serializers import (
     BitacoraSerializer,
     CategoriaSerializer,
     ClienteSerializer,
+    CompraSerializer,
     DetalleVentaSerializer,
     InventarioSerializer,
     MarcaSerializer,
@@ -36,7 +43,15 @@ from .serializers import (
     UsuarioSerializer,
     VentaSerializer,
 )
-from .permissions import IsAdminOrVendedorRole, IsAdminRole, IsClienteRole
+from .permissions import (
+    IsAdminOrAuditorRole,
+    IsAdminOrComprasRole,
+    IsAdminOrVendedorRole,
+    IsAdminRole,
+    IsCatalogoReadRole,
+    IsClienteRole,
+    IsInventarioRole,
+)
 
 
 class BitacoraMixin:
@@ -113,13 +128,13 @@ class RolViewSet(BitacoraMixin, viewsets.ModelViewSet):
 class CategoriaViewSet(BitacoraMixin, viewsets.ModelViewSet):
     queryset = Categoria.objects.all()
     serializer_class = CategoriaSerializer
-    permission_classes = [IsAdminOrVendedorRole]
+    permission_classes = [IsCatalogoReadRole]
 
 
 class MarcaViewSet(BitacoraMixin, viewsets.ModelViewSet):
     queryset = Marca.objects.all()
     serializer_class = MarcaSerializer
-    permission_classes = [IsAdminOrVendedorRole]
+    permission_classes = [IsCatalogoReadRole]
 
 
 class UsuarioViewSet(BitacoraMixin, viewsets.ModelViewSet):
@@ -137,13 +152,13 @@ class ClienteViewSet(BitacoraMixin, viewsets.ModelViewSet):
 class ProveedorViewSet(BitacoraMixin, viewsets.ModelViewSet):
     queryset = Proveedor.objects.all()
     serializer_class = ProveedorSerializer
-    permission_classes = [IsAdminOrVendedorRole]
+    permission_classes = [IsAdminOrComprasRole]
 
 
 class ProductoViewSet(BitacoraMixin, viewsets.ModelViewSet):
     queryset = Producto.objects.all()
     serializer_class = ProductoSerializer
-    permission_classes = [IsAdminOrVendedorRole]
+    permission_classes = [IsCatalogoReadRole]
 
 
 class MisPedidosView(APIView):
@@ -174,19 +189,19 @@ class ProductoPublicoViewSet(viewsets.ReadOnlyModelViewSet):
 class InventarioViewSet(BitacoraMixin, viewsets.ModelViewSet):
     queryset = Inventario.objects.all()
     serializer_class = InventarioSerializer
-    permission_classes = [IsAdminOrVendedorRole]
+    permission_classes = [IsInventarioRole]
 
 
 class MovimientoInventarioViewSet(BitacoraMixin, viewsets.ModelViewSet):
     queryset = MovimientoInventario.objects.all()
     serializer_class = MovimientoInventarioSerializer
-    permission_classes = [IsAdminOrVendedorRole]
+    permission_classes = [IsInventarioRole]
 
 
 class BitacoraViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Bitacora.objects.select_related('id_usuario').all().order_by('-fecha_hora')
     serializer_class = BitacoraSerializer
-    permission_classes = [IsAdminRole]
+    permission_classes = [IsAdminOrAuditorRole]
 
 
 class VentaViewSet(BitacoraMixin, viewsets.ModelViewSet):
@@ -206,6 +221,11 @@ class VentaViewSet(BitacoraMixin, viewsets.ModelViewSet):
         if usuario is None or not hasattr(usuario, 'id_usuario'):
             return Response({'detail': 'Usuario no autenticado.'}, status=status.HTTP_401_UNAUTHORIZED)
 
+        metodo_pago = (serializer.validated_data.get('metodo_pago') or '').strip().lower()
+        monto_recibido_in = serializer.validated_data.get('monto_recibido')
+        numero_comprobante_in = (serializer.validated_data.get('numero_comprobante') or '').strip() or None
+        imagen_qr_url_in = (serializer.validated_data.get('imagen_qr_url') or '').strip() or None
+
         monto_total = Decimal('0.00')
 
         with transaction.atomic():
@@ -214,8 +234,10 @@ class VentaViewSet(BitacoraMixin, viewsets.ModelViewSet):
                 id_usuario=usuario,
                 fecha_hora=timezone.now(),
                 monto_total=Decimal('0.00'),
-                metodo_pago=serializer.validated_data['metodo_pago'],
+                metodo_pago=metodo_pago,
                 estado_venta=serializer.validated_data.get('estado_venta') or 'completada',
+                numero_comprobante=numero_comprobante_in,
+                imagen_qr_url=imagen_qr_url_in,
             )
 
             for detalle in detalles:
@@ -242,8 +264,39 @@ class VentaViewSet(BitacoraMixin, viewsets.ModelViewSet):
 
                 monto_total += subtotal
 
+            # CU09 — validacion de pago segun metodo
+            if metodo_pago == 'efectivo':
+                if monto_recibido_in is None:
+                    transaction.set_rollback(True)
+                    return Response(
+                        {'detail': 'En pago en efectivo es obligatorio el monto recibido.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                monto_recibido = Decimal(str(monto_recibido_in))
+                if monto_recibido < monto_total:
+                    transaction.set_rollback(True)
+                    return Response(
+                        {'detail': f'El monto recibido ({monto_recibido}) es menor al total ({monto_total}).'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                venta.monto_recibido = monto_recibido
+                venta.vuelto = monto_recibido - monto_total
+            elif metodo_pago in ('qr', 'pago_movil_qr', 'transferencia'):
+                if not numero_comprobante_in:
+                    transaction.set_rollback(True)
+                    return Response(
+                        {'detail': 'En pagos QR o transferencia el numero de comprobante es obligatorio.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                venta.monto_recibido = monto_total
+                venta.vuelto = Decimal('0.00')
+            else:
+                # tarjeta u otros: solo se exige que cuadre el total
+                venta.monto_recibido = monto_total
+                venta.vuelto = Decimal('0.00')
+
             venta.monto_total = monto_total
-            venta.save(update_fields=['monto_total'])
+            venta.save(update_fields=['monto_total', 'monto_recibido', 'vuelto'])
 
         self._registrar_bitacora(
             accion='INSERT',
@@ -253,6 +306,148 @@ class VentaViewSet(BitacoraMixin, viewsets.ModelViewSet):
         )
 
         output = self.get_serializer(venta)
+        headers = self.get_success_headers(output.data)
+        return Response(output.data, status=status.HTTP_201_CREATED, headers=headers)
+
+
+class ReciboVentaView(APIView):
+    """CU10 — Genera el recibo de una venta en HTML o PDF.
+
+    Permisos: AllowAny intencionalmente, porque el recibo se abre desde
+    un link <a target="_blank"> que no propaga el Bearer token, y tambien
+    se envia por WhatsApp como URL publica. La unica forma de acceder
+    es conociendo el id_venta.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, pk, *args, **kwargs):
+        formato = (request.query_params.get('formato') or 'html').strip().lower()
+
+        venta = (
+            Venta.objects
+            .select_related('id_cliente', 'id_usuario')
+            .filter(pk=pk)
+            .first()
+        )
+        if venta is None:
+            raise Http404('Venta no encontrada.')
+
+        detalles = (
+            DetalleVenta.objects
+            .select_related('id_producto')
+            .filter(id_venta=venta)
+            .order_by('id_detalle_venta')
+        )
+
+        contexto = {'venta': venta, 'detalles': detalles}
+        html = render_to_string('recibos/recibo_venta.html', contexto)
+
+        if formato == 'pdf':
+            try:
+                from xhtml2pdf import pisa
+            except ImportError:
+                return HttpResponse(
+                    'xhtml2pdf no esta instalado. Ejecuta: pip install xhtml2pdf',
+                    status=500,
+                )
+            buffer = BytesIO()
+            resultado = pisa.CreatePDF(html, dest=buffer)
+            if resultado.err:
+                return HttpResponse('Error al generar PDF.', status=500)
+            response = HttpResponse(buffer.getvalue(), content_type='application/pdf')
+            response['Content-Disposition'] = (
+                f'inline; filename="recibo_venta_{venta.id_venta}.pdf"'
+            )
+            return response
+
+        # default: HTML
+        return HttpResponse(html, content_type='text/html; charset=utf-8')
+
+
+class CompraViewSet(BitacoraMixin, viewsets.ModelViewSet):
+    queryset = (
+        Compra.objects
+        .select_related('id_proveedor', 'id_usuario')
+        .prefetch_related('detalles_compra')
+        .all()
+        .order_by('-fecha_compra')
+    )
+    serializer_class = CompraSerializer
+    permission_classes = [IsAdminOrComprasRole]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        detalles = serializer.validated_data.pop('detalles', [])
+        if not detalles:
+            return Response(
+                {'detail': 'Debes enviar al menos un item en detalles.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        usuario = getattr(request, 'user', None)
+        if usuario is None or not hasattr(usuario, 'id_usuario'):
+            return Response(
+                {'detail': 'Usuario no autenticado.'},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        proveedor = serializer.validated_data['id_proveedor']
+        if (proveedor.estado or '').lower() != 'activo':
+            return Response(
+                {'detail': 'El proveedor no esta activo.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        monto_total = Decimal('0.00')
+
+        with transaction.atomic():
+            compra = Compra.objects.create(
+                id_proveedor=proveedor,
+                id_usuario=usuario,
+                fecha_compra=timezone.now(),
+                monto_total=Decimal('0.00'),
+                estado_compra=serializer.validated_data.get('estado_compra') or 'completada',
+            )
+
+            for detalle in detalles:
+                producto = detalle['id_producto']
+                cantidad = int(detalle['cantidad'])
+                precio_unitario = Decimal(str(detalle['precio_unitario']))
+                subtotal = precio_unitario * cantidad
+
+                DetalleCompra.objects.create(
+                    id_compra=compra,
+                    id_producto=producto,
+                    lote=detalle.get('lote') or None,
+                    fecha_vencimiento=detalle.get('fecha_vencimiento') or None,
+                    cantidad=cantidad,
+                    precio_unitario=precio_unitario,
+                    subtotal=subtotal,
+                )
+
+                MovimientoInventario.objects.create(
+                    id_producto=producto,
+                    id_usuario=usuario,
+                    tipo_movimiento='entrada',
+                    cantidad=cantidad,
+                    motivo=f'Ingreso por compra #{compra.id_compra}',
+                )
+
+                monto_total += subtotal
+
+            compra.monto_total = monto_total
+            compra.save(update_fields=['monto_total'])
+
+        self._registrar_bitacora(
+            accion='INSERT',
+            tabla_afectada=compra._meta.db_table,
+            registro_afectado_id=compra.pk,
+            detalle=f'Se creo registro {compra._meta.model_name} con id={compra.pk} por {monto_total}.',
+        )
+
+        output = self.get_serializer(compra)
         headers = self.get_success_headers(output.data)
         return Response(output.data, status=status.HTTP_201_CREATED, headers=headers)
 

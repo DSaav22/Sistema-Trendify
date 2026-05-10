@@ -8,7 +8,8 @@ INSERT INTO roles (id_rol, nombre_rol, descripcion) VALUES
 (2, 'Vendedor', 'Gestion de ventas, clientes y consulta de inventario.'),
 (3, 'Bodeguero', 'Control de existencias, entradas y salidas de inventario.'),
 (4, 'Compras', 'Registro y seguimiento de compras a proveedores.'),
-(5, 'Auditor', 'Consulta de bitacora y validacion de movimientos.');
+(5, 'Auditor', 'Consulta de bitacora y validacion de movimientos.'),
+(6, 'Cliente', 'Cliente final que compra en la tienda online.');
 
 INSERT INTO categorias (id_categoria, nombre, descripcion, estado) VALUES
 (1, 'Maquillaje', 'Productos para rostro, ojos y labios.', 'activo'),

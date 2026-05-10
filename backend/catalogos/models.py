@@ -208,6 +208,14 @@ class Venta(models.Model):
     monto_total = models.DecimalField(max_digits=12, decimal_places=2)
     metodo_pago = models.CharField(max_length=30)
     estado_venta = models.CharField(max_length=20)
+    monto_recibido = models.DecimalField(
+        max_digits=12, decimal_places=2, blank=True, null=True
+    )
+    vuelto = models.DecimalField(
+        max_digits=12, decimal_places=2, blank=True, null=True
+    )
+    numero_comprobante = models.CharField(max_length=100, blank=True, null=True)
+    imagen_qr_url = models.CharField(max_length=255, blank=True, null=True)
 
     def __str__(self):
         return f'Venta #{self.id_venta}'
@@ -242,6 +250,62 @@ class DetalleVenta(models.Model):
     class Meta:
         db_table = 'detalles_venta'
         verbose_name_plural = 'Detalles de Venta'
+        managed = False
+
+
+class Compra(models.Model):
+    id_compra = models.AutoField(primary_key=True)
+    id_proveedor = models.ForeignKey(
+        Proveedor,
+        on_delete=models.PROTECT,
+        db_column='id_proveedor',
+        related_name='compras'
+    )
+    id_usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.PROTECT,
+        db_column='id_usuario',
+        related_name='compras'
+    )
+    fecha_compra = models.DateTimeField()
+    monto_total = models.DecimalField(max_digits=12, decimal_places=2)
+    estado_compra = models.CharField(max_length=20)
+
+    def __str__(self):
+        return f'Compra #{self.id_compra}'
+
+    class Meta:
+        db_table = 'compras'
+        verbose_name_plural = 'Compras'
+        managed = False
+
+
+class DetalleCompra(models.Model):
+    id_detalle_compra = models.AutoField(primary_key=True)
+    id_compra = models.ForeignKey(
+        Compra,
+        on_delete=models.CASCADE,
+        db_column='id_compra',
+        related_name='detalles_compra'
+    )
+    id_producto = models.ForeignKey(
+        Producto,
+        on_delete=models.PROTECT,
+        db_column='id_producto',
+        related_name='detalles_compra'
+    )
+    lote = models.CharField(max_length=50, blank=True, null=True)
+    fecha_vencimiento = models.DateField(blank=True, null=True)
+    cantidad = models.IntegerField()
+    precio_unitario = models.DecimalField(max_digits=12, decimal_places=2)
+    subtotal = models.DecimalField(max_digits=12, decimal_places=2)
+
+    def __str__(self):
+        return f'Detalle compra #{self.id_detalle_compra}'
+
+    class Meta:
+        db_table = 'detalles_compra'
+        verbose_name_plural = 'Detalles de Compra'
         managed = False
 
 

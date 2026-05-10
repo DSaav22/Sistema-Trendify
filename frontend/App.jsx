@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import CategoriaManager from './CategoriaManager';
 import ClienteManager from './ClienteManager';
 import ProductoManager from './ProductoManager';
+import ProveedoresManager from './ProveedoresManager';
+import ComprasManager from './ComprasManager';
 import InventarioDashboard from './InventarioDashboard';
 import UsuarioManager from './UsuarioManager';
 import RolManager from './RolManager';
@@ -14,18 +16,23 @@ import { useAuth } from './src/context/AuthContext';
 
 const ROLE_ADMIN = 1;
 const ROLE_VENDEDOR = 2;
-const ROLE_CLIENTE = 3;
+const ROLE_BODEGUERO = 3;
+const ROLE_COMPRAS = 4;
+const ROLE_AUDITOR = 5;
+const ROLE_CLIENTE = 6;
 
 const NAV_ITEMS = [
   { key: 'categorias', label: 'Categorias', icon: '📂', allowedRoles: [ROLE_ADMIN] },
   { key: 'clientes', label: 'Clientes', icon: '👥', allowedRoles: [ROLE_ADMIN, ROLE_VENDEDOR] },
-  { key: 'productos', label: 'Productos', icon: '🧴', allowedRoles: [ROLE_ADMIN, ROLE_VENDEDOR] },
+  { key: 'productos', label: 'Productos', icon: '🧴', allowedRoles: [ROLE_ADMIN, ROLE_VENDEDOR, ROLE_BODEGUERO, ROLE_COMPRAS] },
+  { key: 'proveedores', label: 'Proveedores', icon: '🏭', allowedRoles: [ROLE_ADMIN, ROLE_COMPRAS] },
+  { key: 'compras', label: 'Compras', icon: '📥', allowedRoles: [ROLE_ADMIN, ROLE_COMPRAS] },
   { key: 'caja', label: 'Caja / Ventas', icon: '🛒', allowedRoles: [ROLE_ADMIN, ROLE_VENDEDOR] },
-  { key: 'inventario', label: 'Inventario', icon: '📦', allowedRoles: [ROLE_ADMIN, ROLE_VENDEDOR] },
+  { key: 'inventario', label: 'Inventario', icon: '📦', allowedRoles: [ROLE_ADMIN, ROLE_VENDEDOR, ROLE_BODEGUERO, ROLE_COMPRAS] },
   { key: 'usuarios', label: 'Usuarios', icon: '🧑‍💼', allowedRoles: [ROLE_ADMIN] },
   { key: 'roles', label: 'Roles', icon: '🛡️', allowedRoles: [ROLE_ADMIN] },
-  { key: 'bitacora', label: 'Bitacora', icon: '📝', allowedRoles: [ROLE_ADMIN] },
-  { key: 'perfil', label: 'Mi Perfil', icon: '👤', allowedRoles: [ROLE_ADMIN, ROLE_VENDEDOR] },
+  { key: 'bitacora', label: 'Bitacora', icon: '📝', allowedRoles: [ROLE_ADMIN, ROLE_AUDITOR] },
+  { key: 'perfil', label: 'Mi Perfil', icon: '👤', allowedRoles: [ROLE_ADMIN, ROLE_VENDEDOR, ROLE_BODEGUERO, ROLE_COMPRAS, ROLE_AUDITOR] },
 ];
 
 export default function App() {
@@ -108,6 +115,10 @@ export default function App() {
         return <ClienteManager />;
       case 'productos':
         return <ProductoManager />;
+      case 'proveedores':
+        return <ProveedoresManager />;
+      case 'compras':
+        return <ComprasManager />;
       case 'caja':
         return <CajaManager />;
       case 'inventario':
