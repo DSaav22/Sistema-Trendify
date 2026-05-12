@@ -1,11 +1,15 @@
+import csv
 from decimal import Decimal
 from io import BytesIO
 
 from django.db import transaction
+from django.db.models import Q
 from django.http import HttpResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.template.loader import render_to_string
 from django.utils import timezone
+from rest_framework.decorators import action
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 from rest_framework import status, viewsets
@@ -51,15 +55,26 @@ from .permissions import (
     IsCatalogoReadRole,
     IsClienteRole,
     IsInventarioRole,
+    ROLE_CLIENTE,
+    extract_user_role_id,
 )
+
+
+# Campos que nunca deben aparecer en el detalle de la bitacora.
+BITACORA_CAMPOS_SENSIBLES = {'password_hash', 'password'}
+
+
+def get_client_ip_from_request(request):
+    """Extrae la IP del cliente respetando X-Forwarded-For si existe."""
+    forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR', '')
+    if forwarded_for:
+        return forwarded_for.split(',')[0].strip()
+    return request.META.get('REMOTE_ADDR')
 
 
 class BitacoraMixin:
     def _get_client_ip(self):
-        forwarded_for = self.request.META.get('HTTP_X_FORWARDED_FOR', '')
-        if forwarded_for:
-            return forwarded_for.split(',')[0].strip()
-        return self.request.META.get('REMOTE_ADDR')
+        return get_client_ip_from_request(self.request)
 
     def _get_usuario_bitacora(self):
         usuario = getattr(self.request, 'user', None)
@@ -86,6 +101,25 @@ class BitacoraMixin:
             direccion_ip=self._get_client_ip(),
         )
 
+    def _snapshot_instancia(self, instance):
+        """Captura el estado actual de los campos persistidos (sin sensibles)."""
+        if instance is None:
+            return {}
+        snapshot = {}
+        for field in instance._meta.fields:
+            if field.name in BITACORA_CAMPOS_SENSIBLES:
+                continue
+            snapshot[field.name] = getattr(instance, field.name)
+        return snapshot
+
+    def _diff_cambios(self, antes, despues):
+        cambios = []
+        for campo, valor_antes in antes.items():
+            valor_despues = despues.get(campo)
+            if str(valor_antes) != str(valor_despues):
+                cambios.append(f"{campo}: '{valor_antes}' -> '{valor_despues}'")
+        return cambios
+
     def perform_create(self, serializer):
         instance = serializer.save()
         self._registrar_bitacora(
@@ -96,18 +130,36 @@ class BitacoraMixin:
         )
 
     def perform_update(self, serializer):
+        instance_anterior = self.get_object()
+        antes = self._snapshot_instancia(instance_anterior)
         instance = serializer.save()
+        despues = self._snapshot_instancia(instance)
+        cambios = self._diff_cambios(antes, despues)
+        if cambios:
+            detalle = (
+                f'Actualizo {instance._meta.model_name} id={instance.pk}. '
+                f'Cambios: ' + ', '.join(cambios)
+            )
+        else:
+            detalle = (
+                f'Actualizo {instance._meta.model_name} id={instance.pk}. '
+                f'Sin cambios visibles.'
+            )
         self._registrar_bitacora(
             accion='UPDATE',
             tabla_afectada=instance._meta.db_table,
             registro_afectado_id=instance.pk,
-            detalle=f'Se actualizo registro {instance._meta.model_name} con id={instance.pk}.',
+            detalle=detalle,
         )
 
     def perform_destroy(self, instance):
         tabla_afectada = instance._meta.db_table
         registro_afectado_id = instance.pk
-        detalle = f'Se elimino registro {instance._meta.model_name} con id={instance.pk}.'
+        descripcion = str(instance)
+        detalle = (
+            f'Se elimino registro {instance._meta.model_name} id={instance.pk} '
+            f"({descripcion})."
+        )
 
         super().perform_destroy(instance)
 
@@ -198,16 +250,184 @@ class MovimientoInventarioViewSet(BitacoraMixin, viewsets.ModelViewSet):
     permission_classes = [IsInventarioRole]
 
 
+class BitacoraPagination(PageNumberPagination):
+    page_size = 25
+    page_size_query_param = 'page_size'
+    max_page_size = 200
+
+
 class BitacoraViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Bitacora.objects.select_related('id_usuario').all().order_by('-fecha_hora')
     serializer_class = BitacoraSerializer
     permission_classes = [IsAdminOrAuditorRole]
+    pagination_class = BitacoraPagination
+
+    def _filtrar_queryset(self, qs):
+        params = self.request.query_params
+
+        fecha_inicio = params.get('fecha_inicio')
+        if fecha_inicio:
+            qs = qs.filter(fecha_hora__date__gte=fecha_inicio)
+
+        fecha_fin = params.get('fecha_fin')
+        if fecha_fin:
+            qs = qs.filter(fecha_hora__date__lte=fecha_fin)
+
+        id_usuario = params.get('id_usuario')
+        if id_usuario:
+            qs = qs.filter(id_usuario_id=id_usuario)
+
+        accion = params.get('accion')
+        if accion:
+            qs = qs.filter(accion__iexact=accion.strip())
+
+        tabla = params.get('tabla_afectada')
+        if tabla:
+            qs = qs.filter(tabla_afectada__iexact=tabla.strip())
+
+        q = params.get('q')
+        if q:
+            qs = qs.filter(
+                Q(detalle__icontains=q)
+                | Q(accion__icontains=q)
+                | Q(tabla_afectada__icontains=q)
+            )
+
+        return qs
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        return self._filtrar_queryset(qs)
+
+    @action(detail=False, methods=['get'], url_path='usuarios-disponibles')
+    def usuarios_disponibles(self, request):
+        """Lista compacta de usuarios para poblar el filtro de bitacora."""
+        usuarios = Usuario.objects.order_by('nombre_completo').values(
+            'id_usuario', 'nombre_completo', 'username'
+        )
+        return Response(list(usuarios))
+
+    @action(detail=False, methods=['get'], url_path='export')
+    def export_csv(self, request):
+        """Descarga la bitacora filtrada en formato CSV."""
+        qs = self._filtrar_queryset(super().get_queryset())
+
+        response = HttpResponse(content_type='text/csv; charset=utf-8')
+        response['Content-Disposition'] = 'attachment; filename="bitacora.csv"'
+        response.write('﻿')  # BOM para Excel
+
+        writer = csv.writer(response)
+        writer.writerow([
+            'Fecha y hora',
+            'Usuario',
+            'Username',
+            'Accion',
+            'Tabla afectada',
+            'Registro afectado',
+            'Detalle',
+            'IP',
+        ])
+        for log in qs.iterator():
+            usuario = log.id_usuario
+            writer.writerow([
+                log.fecha_hora.isoformat() if log.fecha_hora else '',
+                getattr(usuario, 'nombre_completo', '') or '',
+                getattr(usuario, 'username', '') or '',
+                log.accion or '',
+                log.tabla_afectada or '',
+                log.registro_afectado_id if log.registro_afectado_id is not None else '',
+                log.detalle or '',
+                log.direccion_ip or '',
+            ])
+
+        return response
 
 
 class VentaViewSet(BitacoraMixin, viewsets.ModelViewSet):
     queryset = Venta.objects.select_related('id_cliente', 'id_usuario').prefetch_related('detalles_venta').all().order_by('-fecha_hora')
     serializer_class = VentaSerializer
     permission_classes = [IsAdminOrVendedorRole]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        estado = self.request.query_params.get('estado')
+        if estado:
+            qs = qs.filter(estado_venta__iexact=estado.strip())
+        return qs
+
+    @action(detail=False, methods=['get'], url_path='pendientes')
+    def listar_pendientes(self, request):
+        qs = self.get_queryset().filter(estado_venta__iexact='pendiente_validacion')
+        serializer = self.get_serializer(qs, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'], url_path='confirmar')
+    def confirmar(self, request, pk=None):
+        venta = self.get_object()
+        if (venta.estado_venta or '').lower() != 'pendiente_validacion':
+            return Response(
+                {'detail': f'La venta no esta pendiente. Estado actual: {venta.estado_venta}.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        venta.estado_venta = 'completada'
+        venta.save(update_fields=['estado_venta'])
+
+        self._registrar_bitacora(
+            accion='CONFIRMAR_PAGO',
+            tabla_afectada=venta._meta.db_table,
+            registro_afectado_id=venta.pk,
+            detalle=(
+                f'Confirmacion de pago para venta #{venta.pk} '
+                f'(metodo {venta.metodo_pago}, comprobante {venta.numero_comprobante or "-"}).'
+            ),
+        )
+
+        serializer = self.get_serializer(venta)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'], url_path='rechazar')
+    def rechazar(self, request, pk=None):
+        venta = self.get_object()
+        if (venta.estado_venta or '').lower() != 'pendiente_validacion':
+            return Response(
+                {'detail': f'La venta no esta pendiente. Estado actual: {venta.estado_venta}.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        motivo = (request.data.get('motivo') or '').strip() or 'Sin motivo especificado'
+        usuario_actual = self._get_usuario_bitacora()
+        if usuario_actual is None:
+            return Response(
+                {'detail': 'Usuario no autenticado.'},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        with transaction.atomic():
+            for detalle in DetalleVenta.objects.filter(id_venta=venta).select_related('id_producto'):
+                MovimientoInventario.objects.create(
+                    id_producto=detalle.id_producto,
+                    id_usuario=usuario_actual,
+                    tipo_movimiento='entrada',
+                    cantidad=detalle.cantidad,
+                    motivo=f'Reverso por venta rechazada #{venta.pk}',
+                )
+
+            venta.estado_venta = 'rechazada'
+            venta.save(update_fields=['estado_venta'])
+
+        self._registrar_bitacora(
+            accion='RECHAZAR_PAGO',
+            tabla_afectada=venta._meta.db_table,
+            registro_afectado_id=venta.pk,
+            detalle=(
+                f'Rechazo de pago para venta #{venta.pk}. Motivo: {motivo}. '
+                'Stock revertido al inventario.'
+            ),
+        )
+
+        serializer = self.get_serializer(venta)
+        return Response(serializer.data)
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -452,41 +672,56 @@ class CompraViewSet(BitacoraMixin, viewsets.ModelViewSet):
         return Response(output.data, status=status.HTTP_201_CREATED, headers=headers)
 
 
+METODOS_PAGO_PUBLICOS = {'qr', 'transferencia', 'efectivo_contra_entrega'}
+METODOS_PAGO_REQUIEREN_COMPROBANTE = {'qr', 'transferencia'}
+
+
 class CheckoutPublicoView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request, *args, **kwargs):
         cliente_data = request.data.get('cliente') or {}
         carrito = request.data.get('carrito') or []
-        metodo_pago = (request.data.get('metodo_pago') or 'pago_movil_qr').strip()
+        metodo_pago = (request.data.get('metodo_pago') or 'qr').strip().lower()
+        # Compatibilidad con el nombre antiguo del frontend.
+        if metodo_pago == 'pago_movil_qr':
+            metodo_pago = 'qr'
+        numero_comprobante = (request.data.get('numero_comprobante') or '').strip() or None
+        imagen_qr_url = (request.data.get('imagen_qr_url') or '').strip() or None
+
+        if metodo_pago not in METODOS_PAGO_PUBLICOS:
+            return Response(
+                {'detail': f'Metodo de pago no soportado: {metodo_pago}.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if metodo_pago in METODOS_PAGO_REQUIEREN_COMPROBANTE and not numero_comprobante:
+            return Response(
+                {'detail': 'Debes ingresar el numero de comprobante para el metodo seleccionado.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         usuario_autenticado = request.user if request.user and request.user.is_authenticated else None
-        # Si esta autenticado y tiene rol 3, intentamos sacar el cliente directamente asociado
         cliente_autenticado = None
-        if usuario_autenticado and extract_user_role_id(usuario_autenticado) == 3:
+        if usuario_autenticado and extract_user_role_id(usuario_autenticado) == ROLE_CLIENTE:
             cliente_autenticado = Cliente.objects.filter(id_usuario_fk=usuario_autenticado).first()
 
-        nombre = ''
-        telefono = ''
-        ciudad = ''
-        direccion = ''
-
         if cliente_autenticado:
-             nombre = cliente_autenticado.nombre_completo
-             telefono = cliente_autenticado.telefono or ''
-             ciudad = cliente_autenticado.ciudad or ''
-             direccion = cliente_autenticado.direccion or ''
+            nombre = cliente_autenticado.nombre_completo
+            telefono = cliente_autenticado.telefono or ''
+            ciudad = cliente_autenticado.ciudad or ''
+            direccion = cliente_autenticado.direccion or ''
         else:
-             nombre = str(cliente_data.get('nombre') or '').strip()
-             telefono = str(cliente_data.get('telefono') or '').strip()
-             ciudad = str(cliente_data.get('ciudad') or '').strip()
-             direccion = str(cliente_data.get('direccion') or '').strip()
+            nombre = str(cliente_data.get('nombre') or '').strip()
+            telefono = str(cliente_data.get('telefono') or '').strip()
+            ciudad = str(cliente_data.get('ciudad') or '').strip()
+            direccion = str(cliente_data.get('direccion') or '').strip()
 
-             if not nombre or not telefono or not ciudad or not direccion:
-                  return Response(
-                      {'detail': 'Cliente incompleto: nombre, telefono, ciudad y direccion son obligatorios.'},
-                      status=status.HTTP_400_BAD_REQUEST,
-                  )
+            if not nombre or not telefono or not ciudad or not direccion:
+                return Response(
+                    {'detail': 'Cliente incompleto: nombre, telefono, ciudad y direccion son obligatorios.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         if not isinstance(carrito, list) or not carrito:
             return Response(
@@ -505,7 +740,7 @@ class CheckoutPublicoView(APIView):
 
         with transaction.atomic():
             cliente = cliente_autenticado
-            
+
             if not cliente:
                 cliente = Cliente.objects.filter(telefono=telefono).first()
                 if cliente is None:
@@ -529,7 +764,9 @@ class CheckoutPublicoView(APIView):
                 fecha_hora=timezone.now(),
                 monto_total=Decimal('0.00'),
                 metodo_pago=metodo_pago,
-                estado_venta='completada',
+                estado_venta='pendiente_validacion',
+                numero_comprobante=numero_comprobante,
+                imagen_qr_url=imagen_qr_url,
             )
 
             for item in carrito:
@@ -571,7 +808,7 @@ class CheckoutPublicoView(APIView):
                     id_usuario=usuario_sistema,
                     tipo_movimiento='salida',
                     cantidad=cantidad,
-                    motivo='Venta web publica',
+                    motivo='Venta web publica (pendiente validacion)',
                 )
 
                 monto_total += subtotal
@@ -579,11 +816,28 @@ class CheckoutPublicoView(APIView):
             venta.monto_total = monto_total
             venta.save(update_fields=['monto_total'])
 
+            # Bitacora del checkout publico (siempre contra usuario_sistema).
+            Bitacora.objects.create(
+                id_usuario=usuario_sistema,
+                accion='CHECKOUT_PUBLICO',
+                tabla_afectada='ventas',
+                registro_afectado_id=venta.pk,
+                detalle=(
+                    f'Pedido online #{venta.pk} de {cliente.nombre_completo} '
+                    f'por {monto_total} via {metodo_pago}'
+                    + (f' (comprobante {numero_comprobante})' if numero_comprobante else '')
+                    + '. En espera de validacion.'
+                ),
+                fecha_hora=timezone.now(),
+                direccion_ip=get_client_ip_from_request(request),
+            )
+
         return Response(
             {
-                'message': 'Pago confirmado. Pedido registrado correctamente.',
+                'message': 'Pedido registrado. Esta pendiente de validacion por el equipo.',
                 'id_venta': venta.id_venta,
                 'monto_total': str(venta.monto_total),
+                'estado_venta': venta.estado_venta,
             },
             status=status.HTTP_201_CREATED,
         )

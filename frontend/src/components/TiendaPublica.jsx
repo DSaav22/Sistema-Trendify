@@ -43,7 +43,7 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
   
   const [menuAbierto, setMenuAbierto] = useState(false);
 
-  const isClienteAutenticado = isAuthenticated && user && Number(user?.id_rol?.id_rol || user?.id_rol) === 3;
+  const isClienteAutenticado = isAuthenticated && user && Number(user?.id_rol?.id_rol || user?.id_rol) === 6;
 
   const [cliente, setCliente] = useState({
     nombre: '',
@@ -51,6 +51,8 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
     ciudad: '',
     direccion: '',
   });
+  const [metodoPago, setMetodoPago] = useState('qr');
+  const [numeroComprobante, setNumeroComprobante] = useState('');
   const [submittingCheckout, setSubmittingCheckout] = useState(false);
   const [checkoutError, setCheckoutError] = useState('');
   const [checkoutSuccess, setCheckoutSuccess] = useState('');
@@ -167,10 +169,12 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
     setCliente((prev) => ({ ...prev, [name]: value }));
   };
 
+  const requiereComprobante = metodoPago === 'qr' || metodoPago === 'transferencia';
+
   const confirmarPago = async () => {
     setCheckoutError('');
     setCheckoutSuccess('');
-    
+
     if (!isClienteAutenticado) {
         if (!cliente.nombre.trim() || !cliente.telefono.trim() || !cliente.ciudad.trim() || !cliente.direccion.trim()) {
           setCheckoutError('Completa todos los datos de envio.');
@@ -183,6 +187,11 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
       return;
     }
 
+    if (requiereComprobante && !numeroComprobante.trim()) {
+      setCheckoutError('Ingresa el numero de comprobante de tu pago.');
+      return;
+    }
+
     setSubmittingCheckout(true);
     try {
       const payload = {
@@ -192,7 +201,8 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
           ciudad: cliente.ciudad.trim(),
           direccion: cliente.direccion.trim(),
         },
-        metodo_pago: 'pago_movil_qr',
+        metodo_pago: metodoPago,
+        numero_comprobante: requiereComprobante ? numeroComprobante.trim() : '',
         carrito: carrito.map((item) => ({
           id_producto: item.id_producto,
           cantidad: item.cantidad,
@@ -200,9 +210,13 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
       };
 
       const { data } = await api.post(PUBLIC_CHECKOUT_URL, payload);
-      setCheckoutSuccess('Pedido confirmado. Venta #' + data.id_venta + ' registrada.');
+      setCheckoutSuccess(
+        `Pedido #${data.id_venta} registrado. Esta pendiente de validacion por el equipo.`
+      );
       setCarrito([]);
       setCliente({ nombre: '', telefono: '', ciudad: '', direccion: '' });
+      setNumeroComprobante('');
+      setMetodoPago('qr');
       setCheckoutStep('carrito');
       setOpenCheckout(false);
     } catch (error) {
@@ -393,7 +407,14 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
               <div className="w-full max-w-md bg-white rounded-3xl overflow-hidden shadow-2xl relative">
                   <button onClick={() => setMostrarLogin(false)} className="absolute top-4 right-4 text-slate-500 font-bold bg-slate-100 px-3 py-1 rounded-full z-10 hover:bg-slate-200">X</button>
                   <div className="p-6 pt-10">
-                      <Login minimal onSuccess={() => setMostrarLogin(false)} />
+                      <Login
+                        minimal
+                        onSuccess={() => setMostrarLogin(false)}
+                        onSwitchToRegister={() => {
+                          setMostrarLogin(false);
+                          setMostrarRegistro(true);
+                        }}
+                      />
                   </div>
               </div>
          </div>
@@ -458,18 +479,81 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
                     </div>
                 )}
 
-                <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-center">
-                  <p className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-3 text-center pt-2">QR Simple</p>
-                  <div className="mx-auto h-32 w-32 bg-slate-900 grid place-items-center rounded-xl p-2 relative">
-                    <div className="absolute top-2 left-2 bg-white w-4 h-4" />
-                    <div className="absolute bottom-2 right-2 bg-white w-6 h-6" />
-                    <div className="absolute top-2 right-6 bg-white w-2 h-2" />
-                    <div className="text-white text-xs font-bold text-center">SCAN</div>
+                <div className="mt-4 space-y-3">
+                  <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Metodo de pago</p>
+                  <div className="grid grid-cols-1 gap-2">
+                    {[
+                      { id: 'qr', label: 'Pago Movil / QR', desc: 'Escanea el QR y envia el comprobante.' },
+                      { id: 'transferencia', label: 'Transferencia bancaria', desc: 'Realiza la transferencia y envia el numero de operacion.' },
+                      { id: 'efectivo_contra_entrega', label: 'Efectivo contra entrega', desc: 'Pagas al recibir el pedido.' },
+                    ].map((opt) => (
+                      <label
+                        key={opt.id}
+                        className={[
+                          'flex cursor-pointer items-start gap-3 rounded-xl border px-3 py-3 transition',
+                          metodoPago === opt.id
+                            ? 'border-fuchsia-500 bg-fuchsia-50'
+                            : 'border-slate-200 bg-white hover:border-slate-300',
+                        ].join(' ')}
+                      >
+                        <input
+                          type="radio"
+                          name="metodo_pago"
+                          value={opt.id}
+                          checked={metodoPago === opt.id}
+                          onChange={() => setMetodoPago(opt.id)}
+                          className="mt-1"
+                        />
+                        <div>
+                          <p className="text-sm font-bold text-slate-800">{opt.label}</p>
+                          <p className="text-xs text-slate-500">{opt.desc}</p>
+                        </div>
+                      </label>
+                    ))}
                   </div>
-                  <p className="mt-3 text-center text-sm font-semibold mb-3">Total: {currency(total)}</p>
                 </div>
 
-                <button onClick={confirmarPago} disabled={submittingCheckout} className="mt-4 w-full rounded-xl bg-fuchsia-600 px-4 py-3 text-sm font-black text-white hover:bg-fuchsia-500 disabled:opacity-50">
+                {metodoPago === 'qr' && (
+                  <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-center">
+                    <p className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-3 pt-2">Escanea el QR</p>
+                    <div className="mx-auto h-32 w-32 bg-slate-900 grid place-items-center rounded-xl p-2 relative">
+                      <div className="absolute top-2 left-2 bg-white w-4 h-4" />
+                      <div className="absolute bottom-2 right-2 bg-white w-6 h-6" />
+                      <div className="absolute top-2 right-6 bg-white w-2 h-2" />
+                      <div className="text-white text-xs font-bold text-center">SCAN</div>
+                    </div>
+                    <p className="mt-3 text-sm font-semibold mb-1">Total: {currency(total)}</p>
+                  </div>
+                )}
+
+                {requiereComprobante && (
+                  <div className="mt-4">
+                    <label className="text-xs font-bold uppercase tracking-widest text-slate-500">
+                      Numero de comprobante / referencia *
+                    </label>
+                    <input
+                      value={numeroComprobante}
+                      onChange={(e) => setNumeroComprobante(e.target.value)}
+                      placeholder={metodoPago === 'qr' ? 'Ej. 123456789' : 'N. de operacion bancaria'}
+                      className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-3 text-sm"
+                    />
+                    <p className="mt-1 text-xs text-slate-500">
+                      Tu pedido quedara pendiente hasta que el equipo verifique el pago.
+                    </p>
+                  </div>
+                )}
+
+                {metodoPago === 'efectivo_contra_entrega' && (
+                  <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    Pagaras en efectivo al recibir tu pedido. El equipo confirmara el envio en breve.
+                  </p>
+                )}
+
+                <button
+                  onClick={confirmarPago}
+                  disabled={submittingCheckout}
+                  className="mt-5 w-full rounded-xl bg-fuchsia-600 px-4 py-3 text-sm font-black text-white hover:bg-fuchsia-500 disabled:opacity-50"
+                >
                   {submittingCheckout ? 'Procesando...' : 'Confirmar Pago'}
                 </button>
               </div>

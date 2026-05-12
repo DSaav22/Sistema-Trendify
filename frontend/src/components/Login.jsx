@@ -2,7 +2,7 @@ import { useState } from 'react';
 
 import { useAuth } from '../context/AuthContext';
 
-export default function Login({ onSuccess, minimal }) {
+export default function Login({ onSuccess, minimal, onSwitchToRegister }) {
   const { login } = useAuth();
 
   const [formData, setFormData] = useState({
@@ -10,6 +10,7 @@ export default function Login({ onSuccess, minimal }) {
     password: '',
   });
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
 
   const handleChange = (event) => {
@@ -87,15 +88,25 @@ export default function Login({ onSuccess, minimal }) {
 
             <label className="block">
               <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-700">Contrasena</span>
-              <input
-                type="password"
-                name="password"
-                value={formData.password}
-                onChange={handleChange}
-                autoComplete="current-password"
-                className="mt-2 w-full rounded-xl border border-slate-400 bg-white px-4 py-3.5 text-sm font-medium text-slate-900 shadow-sm transition placeholder:text-slate-400 focus:border-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
-                placeholder="Ingresa tu contrasena"
-              />
+              <div className="relative mt-2">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  name="password"
+                  value={formData.password}
+                  onChange={handleChange}
+                  autoComplete="current-password"
+                  className="w-full rounded-xl border border-slate-400 bg-white px-4 py-3.5 pr-16 text-sm font-medium text-slate-900 shadow-sm transition placeholder:text-slate-400 focus:border-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                  placeholder="Ingresa tu contrasena"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md bg-slate-100 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-600 hover:bg-slate-200"
+                  tabIndex={-1}
+                >
+                  {showPassword ? 'Ocultar' : 'Ver'}
+                </button>
+              </div>
             </label>
 
             {error && (
@@ -109,6 +120,19 @@ export default function Login({ onSuccess, minimal }) {
             >
               {loading ? 'Validando credenciales...' : 'Entrar al panel'}
             </button>
+
+            {onSwitchToRegister && (
+              <p className="text-center text-sm text-slate-600">
+                No tienes cuenta?{' '}
+                <button
+                  type="button"
+                  onClick={onSwitchToRegister}
+                  className="font-bold text-fuchsia-700 hover:text-fuchsia-800 hover:underline"
+                >
+                  Registrate aqui
+                </button>
+              </p>
+            )}
           </form>
         </div>
       </section>

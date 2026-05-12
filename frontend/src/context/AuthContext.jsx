@@ -100,11 +100,20 @@ export function AuthProvider({ children }) {
         return { ok: true };
       } catch (error) {
         const status = error?.response?.status;
+        const detail = error?.response?.data?.detail;
+
+        if (status === 423) {
+          return {
+            ok: false,
+            locked: true,
+            message: detail || 'Cuenta bloqueada temporalmente por demasiados intentos. Intenta en 15 minutos.',
+          };
+        }
         if (status === 401) {
           return { ok: false, message: 'Credenciales incorrectas.' };
         }
         if (status === 403) {
-          return { ok: false, message: 'Usuario inactivo o sin permisos.' };
+          return { ok: false, message: detail || 'Usuario inactivo o sin permisos.' };
         }
 
         return { ok: false, message: 'No se pudo iniciar sesion. Intenta nuevamente.' };
