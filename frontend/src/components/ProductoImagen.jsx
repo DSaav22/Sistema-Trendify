@@ -5,19 +5,23 @@ const EXTENSIONES = ['jpg', 'jpeg', 'png', 'webp'];
 export default function ProductoImagen({
   idProducto,
   nombre,
+  imagenSrc,
   className = '',
   placeholderClassName = '',
   imgClassName = '',
 }) {
   const [extIndex, setExtIndex] = useState(0);
+  const [imagenExternaFallo, setImagenExternaFallo] = useState(false);
 
-  // Si cambia el id de producto, reiniciar la cascada de extensiones
+  // Si cambia el id de producto o la fuente externa, reiniciar la cascada
   useEffect(() => {
     setExtIndex(0);
-  }, [idProducto]);
+    setImagenExternaFallo(false);
+  }, [idProducto, imagenSrc]);
 
   const inicial = (nombre || '?').charAt(0).toUpperCase();
-  const todasFallaron = extIndex >= EXTENSIONES.length;
+  const tieneImagenExterna = Boolean(imagenSrc) && !imagenExternaFallo;
+  const todasFallaron = !tieneImagenExterna && extIndex >= EXTENSIONES.length;
 
   if (todasFallaron) {
     return (
@@ -35,7 +39,16 @@ export default function ProductoImagen({
     );
   }
 
-  const src = `/products/${idProducto}.${EXTENSIONES[extIndex]}`;
+  // Prioridad: 1) imagen subida (data URI o URL), 2) cascada /products/{id}.{ext}
+  const src = tieneImagenExterna ? imagenSrc : `/products/${idProducto}.${EXTENSIONES[extIndex]}`;
+
+  const handleError = () => {
+    if (tieneImagenExterna) {
+      setImagenExternaFallo(true);
+    } else {
+      setExtIndex((i) => i + 1);
+    }
+  };
 
   return (
     <div
@@ -48,7 +61,7 @@ export default function ProductoImagen({
         src={src}
         alt={nombre || `Producto ${idProducto}`}
         loading="lazy"
-        onError={() => setExtIndex((i) => i + 1)}
+        onError={handleError}
         className={['h-full w-full object-cover', imgClassName].join(' ')}
       />
     </div>

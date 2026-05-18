@@ -40,6 +40,7 @@ export function AuthProvider({ children }) {
   const [token, setToken] = useState('');
   const [refreshToken, setRefreshToken] = useState('');
   const [isReady, setIsReady] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
 
   const clearSession = useCallback(() => {
     window.localStorage.removeItem(AUTH_STORAGE_KEY);
@@ -84,11 +85,20 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const handleUnauthorized = () => {
-      logout({ callApi: false });
+      // Si ya hay sesion en memoria, avisamos al usuario antes de cerrarla.
+      // Si no hay token (ej. el 401 vino de un endpoint publico), ignoramos.
+      if (token) {
+        setSessionExpired(true);
+      }
     };
 
     window.addEventListener('auth:unauthorized', handleUnauthorized);
     return () => window.removeEventListener('auth:unauthorized', handleUnauthorized);
+  }, [token]);
+
+  const dismissSessionExpired = useCallback(() => {
+    setSessionExpired(false);
+    logout({ callApi: false });
   }, [logout]);
 
   const login = useCallback(
@@ -128,10 +138,12 @@ export function AuthProvider({ children }) {
       token,
       isReady,
       isAuthenticated: Boolean(user && token),
+      sessionExpired,
+      dismissSessionExpired,
       login,
       logout,
     }),
-    [user, token, isReady, login, logout]
+    [user, token, isReady, sessionExpired, dismissSessionExpired, login, logout]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

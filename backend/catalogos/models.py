@@ -56,6 +56,7 @@ class Usuario(models.Model):
     username = models.CharField(max_length=60)
     password_hash = models.CharField(max_length=255)
     estado = models.CharField(max_length=20)
+    descripcion = models.TextField(blank=True, null=True)
     creado_en = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

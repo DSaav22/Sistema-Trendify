@@ -14,6 +14,11 @@ export default function InventarioDashboard() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  // Edicion inline de stock_minimo: {id_inventario: nuevoValor}
+  const [stockMinEditado, setStockMinEditado] = useState({});
+  const [guardandoStockMin, setGuardandoStockMin] = useState(null);
 
   const [formData, setFormData] = useState({
     id_producto: '',
@@ -57,6 +62,41 @@ export default function InventarioDashboard() {
   useEffect(() => {
     cargarDashboard();
   }, []);
+
+  const cambiarStockMin = (idInventario, valor) => {
+    setStockMinEditado((prev) => ({ ...prev, [idInventario]: valor }));
+  };
+
+  const guardarStockMin = async (item) => {
+    const id = item.id_inventario ?? item.id;
+    const nuevoValor = stockMinEditado[id];
+    if (nuevoValor === undefined) return;
+
+    const parsed = Number(nuevoValor);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      setError('Stock minimo debe ser un numero >= 0.');
+      return;
+    }
+
+    setError('');
+    setSuccess('');
+    setGuardandoStockMin(id);
+    try {
+      await api.patch(`${INVENTARIO_URL}${id}/`, { stock_minimo: parsed });
+      setSuccess(`Stock minimo actualizado para ${item.producto_nombre || 'producto'}.`);
+      setStockMinEditado((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      await cargarDashboard();
+    } catch (err) {
+      console.error('Error actualizando stock minimo:', err);
+      setError(err?.response?.data?.detail || 'No se pudo actualizar el stock minimo.');
+    } finally {
+      setGuardandoStockMin(null);
+    }
+  };
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -116,6 +156,9 @@ export default function InventarioDashboard() {
       {error && (
         <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
       )}
+      {success && (
+        <p className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{success}</p>
+      )}
 
       <div className="grid gap-4 sm:gap-6 lg:grid-cols-2">
         <article className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
@@ -146,13 +189,17 @@ export default function InventarioDashboard() {
                   </tr>
                 ) : (
                   inventario.map((item) => {
+                    const id = item.id_inventario ?? item.id;
                     const stockActual = Number(item.stock_actual ?? 0);
                     const stockMinimo = Number(item.stock_minimo ?? 0);
+                    const valorEditado = stockMinEditado[id];
+                    const valorMostrado = valorEditado !== undefined ? valorEditado : stockMinimo;
+                    const cambioPendiente = valorEditado !== undefined && Number(valorEditado) !== stockMinimo;
                     const enAlerta = stockActual <= stockMinimo;
 
                     return (
                       <tr
-                        key={item.id_inventario ?? item.id}
+                        key={id}
                         className={`border-t border-slate-100 ${enAlerta ? 'bg-red-50/80' : 'bg-white'}`}
                       >
                         <td className="px-4 py-3 font-medium text-slate-800">
@@ -162,7 +209,27 @@ export default function InventarioDashboard() {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-slate-700">{stockActual}</td>
-                        <td className="px-4 py-3 text-slate-700">{stockMinimo}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min={0}
+                              value={valorMostrado}
+                              onChange={(e) => cambiarStockMin(id, e.target.value)}
+                              className="w-20 rounded-md border border-slate-300 px-2 py-1 text-sm"
+                            />
+                            {cambioPendiente && (
+                              <button
+                                type="button"
+                                onClick={() => guardarStockMin(item)}
+                                disabled={guardandoStockMin === id}
+                                className="rounded-md bg-emerald-500 px-2 py-1 text-xs font-bold text-white transition hover:bg-emerald-600 disabled:opacity-50"
+                              >
+                                {guardandoStockMin === id ? '...' : 'Guardar'}
+                              </button>
+                            )}
+                          </div>
+                        </td>
                         <td className="px-4 py-3 text-slate-600">{item.ultima_actualizacion || '-'}</td>
                       </tr>
                     );
@@ -246,19 +313,20 @@ export default function InventarioDashboard() {
                     <th className="px-3 py-2 font-semibold">Producto</th>
                     <th className="px-3 py-2 font-semibold">Tipo</th>
                     <th className="px-3 py-2 font-semibold">Cantidad</th>
+                    <th className="px-3 py-2 font-semibold">Motivo</th>
                     <th className="px-3 py-2 font-semibold">Fecha</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td colSpan={4} className="px-3 py-4 text-center text-slate-500">
+                      <td colSpan={5} className="px-3 py-4 text-center text-slate-500">
                         Cargando movimientos...
                       </td>
                     </tr>
                   ) : movimientos.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="px-3 py-4 text-center text-slate-500">
+                      <td colSpan={5} className="px-3 py-4 text-center text-slate-500">
                         Sin movimientos registrados.
                       </td>
                     </tr>
@@ -272,6 +340,7 @@ export default function InventarioDashboard() {
                           <td className="px-3 py-2 text-slate-700">{mov.producto_nombre || '-'}</td>
                           <td className="px-3 py-2 text-slate-700">{mov.tipo_movimiento}</td>
                           <td className="px-3 py-2 text-slate-700">{mov.cantidad}</td>
+                          <td className="px-3 py-2 text-slate-600">{mov.motivo || '-'}</td>
                           <td className="px-3 py-2 text-slate-500">{mov.fecha_movimiento || '-'}</td>
                         </tr>
                       ))

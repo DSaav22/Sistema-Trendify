@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../utils/api';
 import Login from './Login';
 import ProductoImagen from './ProductoImagen';
+import UserAvatar from './UserAvatar';
 
 const PUBLIC_PRODUCTOS_URL = '/api/public/productos/';
 const PUBLIC_CATEGORIAS_URL = '/api/public/categorias/';
@@ -70,6 +71,24 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
   });
   const [registroError, setRegistroError] = useState('');
   const [registroSuccess, setRegistroSuccess] = useState(false);
+
+  // Toast simple para feedback de "agregado al carrito" y similares.
+  const [toast, setToast] = useState({ visible: false, message: '' });
+  const toastTimerRef = useRef(null);
+
+  const mostrarToast = (mensaje) => {
+    setToast({ visible: true, message: mensaje });
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => {
+      setToast({ visible: false, message: '' });
+    }, 2200);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
+  }, []);
 
   const itemsCount = useMemo(
     () => carrito.reduce((acc, item) => acc + item.cantidad, 0),
@@ -140,6 +159,7 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
         item.id_producto === id ? { ...item, cantidad: item.cantidad + 1 } : item
       );
     });
+    mostrarToast(`✓ ${producto.nombre} anadido al carrito`);
   };
 
   const removeFromCart = (idProducto) => {
@@ -261,7 +281,10 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
           <div className={`mt-3 w-full sm:mt-0 sm:flex sm:w-auto items-center gap-2 sm:gap-3 ${menuAbierto ? "block" : "hidden sm:flex"}`}>
             {isClienteAutenticado ? (
                 <>
-                <span className="font-semibold text-sm text-fuchsia-700 hidden lg:inline">Hola, {user?.username}</span>
+                <span className="hidden lg:inline-flex items-center gap-2 font-semibold text-sm text-fuchsia-700">
+                  <UserAvatar username={user?.username} size="sm" />
+                  Hola, {user?.username}
+                </span>
                 <button type="button" onClick={() => { setMostrarMisPedidos(true); setMenuAbierto(false); }} className="rounded-full border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-slate-400 w-full sm:w-auto mt-2 sm:mt-0">Mis Pedidos</button>
                 <button type="button" onClick={() => { logout(); setMenuAbierto(false); }} className="rounded-full border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-50 w-full sm:w-auto mt-2 sm:mt-0">Salir</button>
                 </>
@@ -327,6 +350,7 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
                   <ProductoImagen
                     idProducto={producto.id_producto}
                     nombre={producto.nombre}
+                    imagenSrc={producto.atributos?.imagen_data_uri}
                     className="w-1/3 sm:w-full h-28 sm:h-40 shrink-0"
                   />
                   <div className="w-2/3 sm:w-full p-4 flex flex-col justify-between h-full">
@@ -559,6 +583,13 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Toast global */}
+      {toast.visible && (
+        <div className="fixed bottom-6 right-6 z-[200] flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-2xl ring-2 ring-emerald-400/30">
+          {toast.message}
         </div>
       )}
     </div>

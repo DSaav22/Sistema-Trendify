@@ -18,6 +18,7 @@ export default function UsuarioManager() {
     nombre_completo: '',
     id_rol: '',
     estado: 'activo',
+    descripcion: '',
   });
 
   const fetchData = async () => {
@@ -69,6 +70,7 @@ export default function UsuarioManager() {
         nombre_completo: formData.nombre_completo.trim(),
         id_rol: Number(formData.id_rol),
         estado: formData.estado,
+        descripcion: formData.descripcion.trim() || null,
       });
 
       setFormData({
@@ -77,6 +79,7 @@ export default function UsuarioManager() {
         nombre_completo: '',
         id_rol: '',
         estado: 'activo',
+        descripcion: '',
       });
 
       await fetchData();
@@ -171,6 +174,15 @@ export default function UsuarioManager() {
               {saving ? 'Guardando...' : 'Crear'}
             </button>
           </div>
+
+          <textarea
+            name="descripcion"
+            value={formData.descripcion}
+            onChange={handleChange}
+            placeholder="Descripcion (opcional): cargo, notas, biografia..."
+            rows={2}
+            className="md:col-span-2 xl:col-span-5 rounded-lg border border-slate-300 px-3 py-2 outline-none transition focus:border-sky-500"
+          />
         </form>
 
         {error && (
@@ -185,6 +197,7 @@ export default function UsuarioManager() {
                 <th className="px-4 py-3 font-semibold">Username</th>
                 <th className="px-4 py-3 font-semibold">Nombre</th>
                 <th className="px-4 py-3 font-semibold">Rol</th>
+                <th className="px-4 py-3 font-semibold">Descripcion</th>
                 <th className="px-4 py-3 font-semibold">Estado</th>
                 <th className="px-4 py-3 font-semibold">Acciones</th>
               </tr>
@@ -192,13 +205,13 @@ export default function UsuarioManager() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-6 text-center text-slate-500">
+                  <td colSpan={7} className="px-4 py-6 text-center text-slate-500">
                     Cargando usuarios...
                   </td>
                 </tr>
               ) : usuarios.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-6 text-center text-slate-500">
+                  <td colSpan={7} className="px-4 py-6 text-center text-slate-500">
                     No hay usuarios registrados.
                   </td>
                 </tr>
@@ -214,6 +227,7 @@ export default function UsuarioManager() {
                       <td className="px-4 py-3 font-medium text-slate-800">{usuario.username}</td>
                       <td className="px-4 py-3 text-slate-700">{usuario.nombre_completo}</td>
                       <td className="px-4 py-3 text-slate-700">{rol?.nombre_rol || rolId || '-'}</td>
+                      <td className="max-w-xs px-4 py-3 text-slate-600 whitespace-normal break-words">{usuario.descripcion || '-'}</td>
                       <td className="px-4 py-3 text-slate-700">{usuario.estado || '-'}</td>
                       <td className="px-4 py-3">
                         <button

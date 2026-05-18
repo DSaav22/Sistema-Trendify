@@ -62,6 +62,16 @@ from .permissions import (
 
 # Campos que nunca deben aparecer en el detalle de la bitacora.
 BITACORA_CAMPOS_SENSIBLES = {'password_hash', 'password'}
+# Cuando un valor del diff supera este tamano (ej. data URI base64 de imagen),
+# lo resumimos para no inflar la bitacora con miles de caracteres por UPDATE.
+BITACORA_VALOR_MAX_CARACTERES = 200
+
+
+def _resumir_valor_bitacora(valor):
+    texto = str(valor) if valor is not None else ''
+    if len(texto) <= BITACORA_VALOR_MAX_CARACTERES:
+        return texto
+    return f'<{len(texto)} caracteres omitidos>'
 
 
 def get_client_ip_from_request(request):
@@ -117,7 +127,10 @@ class BitacoraMixin:
         for campo, valor_antes in antes.items():
             valor_despues = despues.get(campo)
             if str(valor_antes) != str(valor_despues):
-                cambios.append(f"{campo}: '{valor_antes}' -> '{valor_despues}'")
+                cambios.append(
+                    f"{campo}: '{_resumir_valor_bitacora(valor_antes)}' -> "
+                    f"'{_resumir_valor_bitacora(valor_despues)}'"
+                )
         return cambios
 
     def perform_create(self, serializer):
@@ -314,7 +327,8 @@ class BitacoraViewSet(viewsets.ReadOnlyModelViewSet):
 
         response = HttpResponse(content_type='text/csv; charset=utf-8')
         response['Content-Disposition'] = 'attachment; filename="bitacora.csv"'
-        response.write('﻿')  # BOM para Excel
+        response.write('﻿')  # BOM UTF-8 para que Excel respete los acentos
+        response.write('sep=,\r\n')  # Hint para que Excel reconozca el delimitador
 
         writer = csv.writer(response)
         writer.writerow([
@@ -654,6 +668,15 @@ class CompraViewSet(BitacoraMixin, viewsets.ModelViewSet):
                     cantidad=cantidad,
                     motivo=f'Ingreso por compra #{compra.id_compra}',
                 )
+
+                # Si el detalle indica un stock_minimo, lo aplicamos al inventario
+                # del producto (el inventario ya existe gracias al signal de
+                # actualizar_stock_por_movimiento que se ejecuto arriba).
+                stock_minimo_in = detalle.get('stock_minimo')
+                if stock_minimo_in is not None:
+                    Inventario.objects.filter(id_producto=producto).update(
+                        stock_minimo=int(stock_minimo_in)
+                    )
 
                 monto_total += subtotal
 

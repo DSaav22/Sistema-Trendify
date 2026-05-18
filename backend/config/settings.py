@@ -103,6 +103,11 @@ STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# Subimos los limites de upload para soportar imagenes de producto en base64
+# (data URI). 10 MB de imagen ~= 13.3 MB en base64; dejamos 20 MB de margen.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024
+
 # CORS: en dev permitimos todo (Vite proxy ya maneja /api).
 # En prod se debe pasar CORS_ALLOWED_ORIGINS=https://<firebase>.web.app,...
 CORS_ALLOWED_ORIGINS = _split_csv(os.environ.get('CORS_ALLOWED_ORIGINS', ''))

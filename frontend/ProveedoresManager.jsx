@@ -109,6 +109,12 @@ export default function ProveedoresManager() {
       <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm">
         <h2 className="mb-4 text-2xl font-bold text-slate-800">Gestion de Proveedores</h2>
 
+        {editingId && (
+          <p className="mb-3 inline-flex rounded-full bg-red-100 px-3 py-1 text-xs font-bold uppercase tracking-wider text-red-700">
+            Editando proveedor #{editingId}
+          </p>
+        )}
+
         <form onSubmit={handleSubmit} className="mb-6 grid gap-3 md:grid-cols-2">
           <input
             type="text"
@@ -148,7 +154,11 @@ export default function ProveedoresManager() {
             <button
               type="submit"
               disabled={saving}
-              className="flex-1 rounded-lg bg-sky-600 px-4 py-2 font-medium text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
+              className={`flex-1 rounded-lg px-4 py-2 font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                editingId
+                  ? 'bg-red-600 hover:bg-red-700'
+                  : 'bg-sky-600 hover:bg-sky-700'
+              }`}
             >
               {saving
                 ? 'Guardando...'

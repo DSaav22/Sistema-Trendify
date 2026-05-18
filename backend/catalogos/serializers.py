@@ -182,6 +182,8 @@ class DetalleCompraInputSerializer(serializers.Serializer):
     precio_unitario = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0)
     lote = serializers.CharField(max_length=50, required=False, allow_blank=True, allow_null=True)
     fecha_vencimiento = serializers.DateField(required=False, allow_null=True)
+    # Permite ajustar el stock minimo del producto al registrar la compra.
+    stock_minimo = serializers.IntegerField(min_value=0, required=False, allow_null=True)
 
 
 class DetalleCompraSerializer(serializers.ModelSerializer):

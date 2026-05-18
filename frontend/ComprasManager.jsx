@@ -75,6 +75,7 @@ export default function ComprasManager() {
         precio_unitario: '',
         lote: '',
         fecha_vencimiento: '',
+        stock_minimo: '',
       },
     ]);
   };
@@ -133,13 +134,22 @@ export default function ComprasManager() {
       const payload = {
         id_proveedor: Number(idProveedor),
         estado_compra: 'completada',
-        detalles: items.map((it) => ({
-          id_producto: Number(it.id_producto),
-          cantidad: Number(it.cantidad),
-          precio_unitario: Number(it.precio_unitario),
-          lote: it.lote || null,
-          fecha_vencimiento: it.fecha_vencimiento || null,
-        })),
+        detalles: items.map((it) => {
+          const detalle = {
+            id_producto: Number(it.id_producto),
+            cantidad: Number(it.cantidad),
+            precio_unitario: Number(it.precio_unitario),
+            lote: it.lote || null,
+            fecha_vencimiento: it.fecha_vencimiento || null,
+          };
+          if (it.stock_minimo !== '' && it.stock_minimo !== undefined && it.stock_minimo !== null) {
+            const parsed = Number(it.stock_minimo);
+            if (Number.isFinite(parsed) && parsed >= 0) {
+              detalle.stock_minimo = parsed;
+            }
+          }
+          return detalle;
+        }),
       };
 
       const { data } = await api.post(COMPRAS_URL, payload);
@@ -214,6 +224,7 @@ export default function ComprasManager() {
                 <th className="px-3 py-2 font-semibold">Precio compra</th>
                 <th className="px-3 py-2 font-semibold">Lote</th>
                 <th className="px-3 py-2 font-semibold">Vencimiento</th>
+                <th className="px-3 py-2 font-semibold" title="Opcional - ajusta el stock minimo del producto en inventario">Stock min.</th>
                 <th className="px-3 py-2 font-semibold">Subtotal</th>
                 <th className="px-3 py-2 font-semibold">Accion</th>
               </tr>
@@ -221,7 +232,7 @@ export default function ComprasManager() {
             <tbody>
               {items.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-3 py-6 text-center text-slate-500">
+                  <td colSpan={8} className="px-3 py-6 text-center text-slate-500">
                     No hay items. Agrega al menos uno.
                   </td>
                 </tr>
@@ -278,6 +289,17 @@ export default function ComprasManager() {
                           value={it.fecha_vencimiento}
                           onChange={(e) => actualizarItem(i, 'fecha_vencimiento', e.target.value)}
                           className="w-40 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="number"
+                          min={0}
+                          value={it.stock_minimo ?? ''}
+                          onChange={(e) => actualizarItem(i, 'stock_minimo', e.target.value)}
+                          placeholder="-"
+                          className="w-20 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+                          title="Opcional: actualiza el stock minimo del producto"
                         />
                       </td>
                       <td className="px-3 py-2 text-slate-700">{formatCurrency(subtotal)}</td>

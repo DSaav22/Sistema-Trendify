@@ -367,6 +367,7 @@ export default function CajaManager() {
                     <ProductoImagen
                       idProducto={id}
                       nombre={producto.nombre}
+                      imagenSrc={producto.atributos?.imagen_data_uri}
                       className="aspect-square w-full"
                     />
                     <div className="p-4">

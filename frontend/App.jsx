@@ -13,6 +13,8 @@ import BitacoraManager from './src/components/BitacoraManager';
 import Perfil from './src/components/Perfil';
 import Login from './src/components/Login';
 import TiendaPublica from './src/components/TiendaPublica';
+import UserAvatar from './src/components/UserAvatar';
+import SessionExpiredModal from './src/components/SessionExpiredModal';
 import { useAuth } from './src/context/AuthContext';
 
 const ROLE_ADMIN = 1;
@@ -151,12 +153,15 @@ export default function App() {
   if (!isAuthenticated || userRolId === ROLE_CLIENTE) {
     if (publicView === 'store') {
       return (
-        <TiendaPublica 
-          onAccesoPersonal={() => setPublicView('login')} 
-          user={user} 
-          logout={logout}
-          isAuthenticated={isAuthenticated}
-        />
+        <>
+          <TiendaPublica
+            onAccesoPersonal={() => setPublicView('login')}
+            user={user}
+            logout={logout}
+            isAuthenticated={isAuthenticated}
+          />
+          <SessionExpiredModal />
+        </>
       );
     }
 
@@ -170,6 +175,7 @@ export default function App() {
           Volver a Tienda
         </button>
         <Login onSuccess={() => setPublicView('store')} />
+        <SessionExpiredModal />
       </div>
     );
   }
@@ -250,11 +256,18 @@ export default function App() {
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2 sm:gap-3">
-                <div className="hidden md:flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[10px] sm:text-xs font-semibold text-emerald-700">
+                <div className="hidden md:inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[10px] sm:text-xs font-semibold text-emerald-700">
+                  <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
                   Online
                 </div>
-                <div className="hidden lg:flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700 max-w-[150px] truncate">
-                  {user?.username || 'Usuario'}
+                <div className="hidden lg:flex items-center gap-2">
+                  <UserAvatar username={user?.username} size="sm" />
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700 max-w-[150px] truncate">
+                    {user?.username || 'Usuario'}
+                  </span>
+                </div>
+                <div className="lg:hidden">
+                  <UserAvatar username={user?.username} size="sm" />
                 </div>
                 <button
                   type="button"
@@ -273,6 +286,7 @@ export default function App() {
           <div className="mx-auto w-full max-w-[1500px] p-4 sm:p-6 overflow-x-hidden">{renderActiveView()}</div>
         </main>
       </div>
+      <SessionExpiredModal />
     </div>
   );
 }
