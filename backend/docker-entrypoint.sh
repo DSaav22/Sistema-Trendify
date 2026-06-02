@@ -25,8 +25,10 @@ else:
     sys.exit("Timeout: PostgreSQL no respondio a tiempo")
 PY
 
-echo "Sincronizando migraciones Django (fake)..."
-python manage.py migrate --fake
+echo "Sincronizando migraciones Django..."
+# El schema SQL ya crea tablas de negocio; las tablas django_* requieren migrate real.
+python manage.py migrate contenttypes auth admin sessions
+python manage.py migrate catalogos --fake
 
 echo "Restableciendo contrasenas seed a 123456..."
 python scripts/reset_passwords_and_list_users.py
