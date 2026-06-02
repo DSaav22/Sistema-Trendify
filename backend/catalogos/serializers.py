@@ -7,10 +7,12 @@ from .models import (
     Cliente,
     Compra,
     DetalleCompra,
+    DetallePedidoGuardado,
     DetalleVenta,
     Inventario,
     Marca,
     MovimientoInventario,
+    PedidoGuardado,
     Producto,
     Proveedor,
     Rol,
@@ -174,6 +176,40 @@ class DetalleVentaSerializer(serializers.ModelSerializer):
             'precio_unitario',
             'subtotal',
         ]
+
+
+class DetallePedidoGuardadoSerializer(serializers.ModelSerializer):
+    producto = ProductoSerializer(source='id_producto', read_only=True)
+    producto_nombre = serializers.StringRelatedField(source='id_producto', read_only=True)
+    precio_venta = serializers.DecimalField(source='id_producto.precio_venta', max_digits=10, decimal_places=2, read_only=True)
+
+    class Meta:
+        model = DetallePedidoGuardado
+        fields = [
+            'id_detalle_pedido_guardado',
+            'id_pedido_guardado',
+            'id_producto',
+            'producto',
+            'producto_nombre',
+            'precio_venta',
+            'cantidad',
+        ]
+
+
+class PedidoGuardadoSerializer(serializers.ModelSerializer):
+    detalles_pedido_guardado = DetallePedidoGuardadoSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = PedidoGuardado
+        fields = [
+            'id_pedido_guardado',
+            'id_cliente',
+            'nombre',
+            'creado_en',
+            'actualizado_en',
+            'detalles_pedido_guardado',
+        ]
+        read_only_fields = ['id_cliente', 'creado_en', 'actualizado_en']
 
 
 class DetalleCompraInputSerializer(serializers.Serializer):
