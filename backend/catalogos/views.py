@@ -22,10 +22,12 @@ from .models import (
     Cliente,
     Compra,
     DetalleCompra,
+    DetallePedidoGuardado,
     DetalleVenta,
     Inventario,
     Marca,
     MovimientoInventario,
+    PedidoGuardado,
     Producto,
     Proveedor,
     Rol,
@@ -41,6 +43,7 @@ from .serializers import (
     InventarioSerializer,
     MarcaSerializer,
     MovimientoInventarioSerializer,
+    PedidoGuardadoSerializer,
     ProductoSerializer,
     ProveedorSerializer,
     RolSerializer,
@@ -238,6 +241,100 @@ class MisPedidosView(APIView):
         ventas = Venta.objects.filter(id_cliente=cliente).order_by('-fecha_hora').prefetch_related('detalles_venta')
         serializer = VentaSerializer(ventas, many=True)
         return Response(serializer.data)
+
+
+class PedidosGuardadosView(APIView):
+    permission_classes = [IsClienteRole]
+
+    def _get_cliente(self, request):
+        return Cliente.objects.filter(id_usuario_fk=request.user).first()
+
+    def get(self, request):
+        cliente = self._get_cliente(request)
+        if not cliente:
+            return Response([])
+
+        pedidos = (
+            PedidoGuardado.objects
+            .filter(id_cliente=cliente)
+            .prefetch_related('detalles_pedido_guardado__id_producto')
+            .order_by('-actualizado_en', '-id_pedido_guardado')
+        )
+        serializer = PedidoGuardadoSerializer(pedidos, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        cliente = self._get_cliente(request)
+        if not cliente:
+            return Response(
+                {'detail': 'No existe un cliente asociado a tu usuario.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        nombre = str(request.data.get('nombre') or '').strip()
+        carrito = request.data.get('carrito') or []
+
+        if not nombre:
+            return Response({'detail': 'Ingresa un nombre para el pedido.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not isinstance(carrito, list) or not carrito:
+            return Response({'detail': 'El carrito debe tener al menos un producto.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        detalles_validados = []
+        for item in carrito:
+            id_producto = item.get('id_producto') or item.get('id')
+            try:
+                cantidad = int(item.get('cantidad', 0))
+            except (TypeError, ValueError):
+                return Response({'detail': 'Cantidad invalida en carrito.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            if not id_producto or cantidad <= 0:
+                return Response(
+                    {'detail': 'Cada item requiere id_producto y cantidad > 0.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            producto = Producto.objects.filter(id_producto=id_producto, estado__iexact='activo').first()
+            if producto is None:
+                return Response(
+                    {'detail': f'Producto no encontrado o inactivo: {id_producto}.'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            detalles_validados.append((producto, cantidad))
+
+        with transaction.atomic():
+            pedido = PedidoGuardado.objects.create(id_cliente=cliente, nombre=nombre)
+
+            for producto, cantidad in detalles_validados:
+                DetallePedidoGuardado.objects.create(
+                    id_pedido_guardado=pedido,
+                    id_producto=producto,
+                    cantidad=cantidad,
+                )
+
+        output = PedidoGuardadoSerializer(
+            PedidoGuardado.objects
+            .prefetch_related('detalles_pedido_guardado__id_producto')
+            .get(pk=pedido.pk)
+        )
+        return Response(output.data, status=status.HTTP_201_CREATED)
+
+
+class PedidoGuardadoDetalleView(APIView):
+    permission_classes = [IsClienteRole]
+
+    def delete(self, request, pk):
+        cliente = Cliente.objects.filter(id_usuario_fk=request.user).first()
+        if not cliente:
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        pedido = PedidoGuardado.objects.filter(id_cliente=cliente, pk=pk).first()
+        if pedido:
+            pedido.delete()
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 class CategoriaPublicaViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Categoria.objects.all().order_by('nombre')

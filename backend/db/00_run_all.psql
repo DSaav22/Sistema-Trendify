@@ -16,6 +16,10 @@ BEGIN;
 -- 3) Crear esquema y 4) cargar datos
 \i 02_schema.sql
 \i 03_seed.sql
+\i 04_migracion_pago_cu09.sql
+\i 05_migracion_rol_cliente.sql
+\i 07_migracion_descripcion_usuario.sql
+\i 08_migracion_pedidos_guardados.sql
 
 COMMIT;
 

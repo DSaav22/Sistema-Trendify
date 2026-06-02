@@ -8,6 +8,7 @@ const PUBLIC_PRODUCTOS_URL = '/api/public/productos/';
 const PUBLIC_CATEGORIAS_URL = '/api/public/categorias/';
 const PUBLIC_CHECKOUT_URL = '/api/public/checkout/';
 const MIS_PEDIDOS_URL = '/api/mis-pedidos/';
+const PEDIDOS_GUARDADOS_URL = '/api/pedidos-guardados/';
 const REGISTRO_URL = '/api/auth/registro/';
 
 function normalizeList(data) {
@@ -43,6 +44,11 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
   const [carrito, setCarrito] = useState([]);
   const [openCheckout, setOpenCheckout] = useState(false);
   const [checkoutStep, setCheckoutStep] = useState('carrito');
+  const [pedidosGuardados, setPedidosGuardados] = useState([]);
+  const [cargandoPedidosGuardados, setCargandoPedidosGuardados] = useState(false);
+  const [pedidoGuardadoError, setPedidoGuardadoError] = useState('');
+  const [mostrarGuardarPedido, setMostrarGuardarPedido] = useState(false);
+  const [nombrePedidoGuardado, setNombrePedidoGuardado] = useState('');
   
   const [menuAbierto, setMenuAbierto] = useState(false);
 
@@ -160,6 +166,12 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
      }
   }, [isClienteAutenticado, mostrarMisPedidos]);
 
+  useEffect(() => {
+    if (isClienteAutenticado && openCheckout) {
+      cargarPedidosGuardados();
+    }
+  }, [isClienteAutenticado, openCheckout]);
+
   const cargarMisPedidos = async () => {
       setCargandoPedidos(true);
       try {
@@ -170,6 +182,96 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
       } finally {
           setCargandoPedidos(false);
       }
+  };
+
+  const cargarPedidosGuardados = async () => {
+      setCargandoPedidosGuardados(true);
+      setPedidoGuardadoError('');
+      try {
+          const res = await api.get(PEDIDOS_GUARDADOS_URL);
+          setPedidosGuardados(normalizeList(res.data));
+      } catch(e) {
+          console.error('Error cargando pedidos guardados', e);
+          setPedidoGuardadoError('No se pudieron cargar tus pedidos guardados.');
+      } finally {
+          setCargandoPedidosGuardados(false);
+      }
+  };
+
+  const abrirGuardarPedido = () => {
+    setPedidoGuardadoError('');
+    if (!isClienteAutenticado) {
+      setOpenCheckout(false);
+      setMostrarLogin(true);
+      return;
+    }
+    if (carrito.length === 0) {
+      setPedidoGuardadoError('Agrega productos antes de guardar un pedido.');
+      return;
+    }
+    setNombrePedidoGuardado('');
+    setMostrarGuardarPedido(true);
+  };
+
+  const guardarPedidoActual = async () => {
+    const nombre = nombrePedidoGuardado.trim();
+    if (!nombre) {
+      setPedidoGuardadoError('Ingresa un nombre para guardar el pedido.');
+      return;
+    }
+
+    setPedidoGuardadoError('');
+    try {
+      const payload = {
+        nombre,
+        carrito: carrito.map((item) => ({
+          id_producto: item.id_producto,
+          cantidad: item.cantidad,
+        })),
+      };
+      await api.post(PEDIDOS_GUARDADOS_URL, payload);
+      setMostrarGuardarPedido(false);
+      setNombrePedidoGuardado('');
+      mostrarToast(`Pedido "${nombre}" guardado`);
+      cargarPedidosGuardados();
+    } catch (error) {
+      setPedidoGuardadoError(error?.response?.data?.detail || 'No se pudo guardar el pedido.');
+    }
+  };
+
+  const cargarPedidoGuardadoAlCarrito = (pedido) => {
+    const items = (pedido.detalles_pedido_guardado || [])
+      .map((detalle) => {
+        const producto = detalle.producto;
+        if (!producto) return null;
+        return {
+          ...producto,
+          id_producto: Number(producto.id_producto ?? detalle.id_producto),
+          cantidad: Number(detalle.cantidad || 1),
+        };
+      })
+      .filter(Boolean);
+
+    if (items.length === 0) {
+      setPedidoGuardadoError('Este pedido guardado no tiene productos disponibles.');
+      return;
+    }
+
+    setCarrito(items);
+    setCheckoutStep('carrito');
+    setPedidoGuardadoError('');
+    mostrarToast(`Pedido "${pedido.nombre}" cargado al carrito`);
+  };
+
+  const eliminarPedidoGuardado = async (idPedido) => {
+    setPedidoGuardadoError('');
+    try {
+      await api.delete(`${PEDIDOS_GUARDADOS_URL}${idPedido}/`);
+      setPedidosGuardados((prev) => prev.filter((pedido) => pedido.id_pedido_guardado !== idPedido));
+      mostrarToast('Pedido guardado eliminado');
+    } catch (error) {
+      setPedidoGuardadoError(error?.response?.data?.detail || 'No se pudo eliminar el pedido guardado.');
+    }
   };
 
   const addToCart = (producto) => {
@@ -508,6 +610,30 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
          </div>
       )}
 
+      {/* MODAL GUARDAR PEDIDO */}
+      {mostrarGuardarPedido && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/60 p-4">
+          <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-xl font-black text-slate-900">Guardar pedido</h3>
+              <button onClick={() => setMostrarGuardarPedido(false)} className="rounded-full border border-slate-300 px-3 py-1 text-sm font-semibold text-slate-600 hover:bg-slate-50">X</button>
+            </div>
+            <input
+              autoFocus
+              value={nombrePedidoGuardado}
+              onChange={(event) => setNombrePedidoGuardado(event.target.value)}
+              placeholder="Ej. Navidad, compra mensual"
+              className="mt-5 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold outline-none transition focus:border-fuchsia-400 focus:ring-2 focus:ring-fuchsia-100"
+            />
+            {pedidoGuardadoError && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{pedidoGuardadoError}</p>}
+            <div className="mt-5 flex gap-2">
+              <button onClick={() => setMostrarGuardarPedido(false)} className="flex-1 rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50">Cancelar</button>
+              <button onClick={guardarPedidoActual} className="flex-1 rounded-xl bg-slate-900 px-4 py-3 text-sm font-black text-white hover:bg-slate-800">Guardar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* CHECKOUT DRAWER */}
       {openCheckout && (
         <div className="fixed inset-0 z-[90] flex justify-end bg-slate-900/60 transition-opacity">
@@ -520,6 +646,49 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
 
             {checkoutStep === 'carrito' && (
               <div>
+                <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <button onClick={abrirGuardarPedido} className="rounded-xl border border-fuchsia-200 bg-fuchsia-50 px-4 py-3 text-sm font-black text-fuchsia-800 transition hover:bg-fuchsia-100">
+                    Guardar pedido
+                  </button>
+                  {isClienteAutenticado && (
+                    <button onClick={cargarPedidosGuardados} className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-50">
+                      Actualizar guardados
+                    </button>
+                  )}
+                </div>
+                {pedidoGuardadoError && <p className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{pedidoGuardadoError}</p>}
+
+                {isClienteAutenticado && (
+                  <div className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-xs font-black uppercase tracking-widest text-slate-500">Pedidos guardados</p>
+                      <span className="text-xs font-bold text-slate-400">{pedidosGuardados.length}</span>
+                    </div>
+                    {cargandoPedidosGuardados ? (
+                      <p className="mt-3 text-sm text-slate-500">Cargando...</p>
+                    ) : pedidosGuardados.length === 0 ? (
+                      <p className="mt-3 text-sm text-slate-500">Todavia no tienes pedidos guardados.</p>
+                    ) : (
+                      <div className="mt-3 space-y-2">
+                        {pedidosGuardados.map((pedido) => (
+                          <div key={pedido.id_pedido_guardado} className="rounded-xl border border-slate-200 bg-white p-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-black text-slate-900">{pedido.nombre}</p>
+                                <p className="mt-0.5 text-xs text-slate-500">{pedido.detalles_pedido_guardado?.length || 0} productos</p>
+                              </div>
+                              <button onClick={() => eliminarPedidoGuardado(pedido.id_pedido_guardado)} className="shrink-0 text-xs font-bold text-red-500 hover:text-red-600">Eliminar</button>
+                            </div>
+                            <button onClick={() => cargarPedidoGuardadoAlCarrito(pedido)} className="mt-3 w-full rounded-lg bg-slate-900 px-3 py-2 text-xs font-black text-white hover:bg-slate-800">
+                              Cargar al carrito
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {carrito.length === 0 ? <p className="text-slate-600 text-center py-8">Vacio.</p> : (
                   <div className="space-y-4">
                     {carrito.map((item) => (

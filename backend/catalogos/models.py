@@ -254,6 +254,52 @@ class DetalleVenta(models.Model):
         managed = False
 
 
+class PedidoGuardado(models.Model):
+    id_pedido_guardado = models.AutoField(primary_key=True)
+    id_cliente = models.ForeignKey(
+        Cliente,
+        on_delete=models.CASCADE,
+        db_column='id_cliente',
+        related_name='pedidos_guardados'
+    )
+    nombre = models.CharField(max_length=120)
+    creado_en = models.DateTimeField(auto_now_add=True)
+    actualizado_en = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.nombre
+
+    class Meta:
+        db_table = 'pedidos_guardados'
+        verbose_name_plural = 'Pedidos guardados'
+        managed = False
+
+
+class DetallePedidoGuardado(models.Model):
+    id_detalle_pedido_guardado = models.AutoField(primary_key=True)
+    id_pedido_guardado = models.ForeignKey(
+        PedidoGuardado,
+        on_delete=models.CASCADE,
+        db_column='id_pedido_guardado',
+        related_name='detalles_pedido_guardado'
+    )
+    id_producto = models.ForeignKey(
+        Producto,
+        on_delete=models.PROTECT,
+        db_column='id_producto',
+        related_name='detalles_pedido_guardado'
+    )
+    cantidad = models.IntegerField()
+
+    def __str__(self):
+        return f'{self.id_producto.nombre} x {self.cantidad}'
+
+    class Meta:
+        db_table = 'detalles_pedido_guardado'
+        verbose_name_plural = 'Detalles de pedidos guardados'
+        managed = False
+
+
 class Compra(models.Model):
     id_compra = models.AutoField(primary_key=True)
     id_proveedor = models.ForeignKey(
