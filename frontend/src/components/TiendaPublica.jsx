@@ -34,6 +34,8 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
   const [categorias, setCategorias] = useState([]);
   const [productos, setProductos] = useState([]);
   const [filtroCategoria, setFiltroCategoria] = useState('all');
+  const [busqueda, setBusqueda] = useState('');
+  const [ordenCatalogo, setOrdenCatalogo] = useState('nombre_asc');
 
   const [loadingCatalogo, setLoadingCatalogo] = useState(true);
   const [errorCatalogo, setErrorCatalogo] = useState('');
@@ -101,9 +103,33 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
   );
 
   const productosFiltrados = useMemo(() => {
-    if (filtroCategoria === 'all') return productos;
-    return productos.filter((p) => Number(p.id_categoria) === Number(filtroCategoria));
-  }, [productos, filtroCategoria]);
+    const textoBusqueda = busqueda.trim().toLowerCase();
+    const productosPorCategoria = filtroCategoria === 'all'
+      ? productos
+      : productos.filter((p) => Number(p.id_categoria) === Number(filtroCategoria));
+
+    const productosPorBusqueda = textoBusqueda
+      ? productosPorCategoria.filter((p) => String(p.nombre || '').toLowerCase().includes(textoBusqueda))
+      : productosPorCategoria;
+
+    return [...productosPorBusqueda].sort((a, b) => {
+      const nombreA = String(a.nombre || '');
+      const nombreB = String(b.nombre || '');
+      const precioA = Number(a.precio_venta || 0);
+      const precioB = Number(b.precio_venta || 0);
+
+      if (ordenCatalogo === 'nombre_desc') {
+        return nombreB.localeCompare(nombreA, 'es', { sensitivity: 'base' });
+      }
+      if (ordenCatalogo === 'precio_asc') {
+        return precioA - precioB;
+      }
+      if (ordenCatalogo === 'precio_desc') {
+        return precioB - precioA;
+      }
+      return nombreA.localeCompare(nombreB, 'es', { sensitivity: 'base' });
+    });
+  }, [productos, filtroCategoria, busqueda, ordenCatalogo]);
 
   useEffect(() => {
     let active = true;
@@ -332,16 +358,53 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
       <main className="mx-auto w-full max-w-[1300px] px-4 pb-16 sm:px-6">
         {checkoutSuccess && <p className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{checkoutSuccess}</p>}
 
-        <div className="mb-6 flex flex-wrap gap-2 overflow-x-auto pb-2">
-          <button onClick={() => setFiltroCategoria('all')} className={['whitespace-nowrap rounded-full px-4 py-2 text-xs font-bold uppercase tracking-wider transition', filtroCategoria === 'all' ? 'bg-slate-900 text-white' : 'border border-slate-300 bg-white text-slate-700 hover:border-slate-400'].join(' ')}>Todas</button>
-          {categorias.map((cat) => (
-              <button key={cat.id_categoria} onClick={() => setFiltroCategoria(String(cat.id_categoria))} className={['whitespace-nowrap rounded-full px-4 py-2 text-xs font-bold uppercase tracking-wider transition', String(filtroCategoria) === String(cat.id_categoria) ? 'bg-slate-900 text-white' : 'border border-slate-300 bg-white text-slate-700 hover:border-slate-400'].join(' ')}>{cat.nombre}</button>
-          ))}
+        <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex gap-2 overflow-x-auto pb-2 lg:flex-1">
+            <button onClick={() => setFiltroCategoria('all')} className={['whitespace-nowrap rounded-full px-4 py-2 text-xs font-bold uppercase tracking-wider transition', filtroCategoria === 'all' ? 'bg-slate-900 text-white' : 'border border-slate-300 bg-white text-slate-700 hover:border-slate-400'].join(' ')}>Todas</button>
+            {categorias.map((cat) => (
+                <button key={cat.id_categoria} onClick={() => setFiltroCategoria(String(cat.id_categoria))} className={['whitespace-nowrap rounded-full px-4 py-2 text-xs font-bold uppercase tracking-wider transition', String(filtroCategoria) === String(cat.id_categoria) ? 'bg-slate-900 text-white' : 'border border-slate-300 bg-white text-slate-700 hover:border-slate-400'].join(' ')}>{cat.nombre}</button>
+            ))}
+          </div>
+
+          <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-[minmax(220px,320px)_minmax(180px,220px)] lg:w-auto">
+            <label className="relative block">
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-4.35-4.35" />
+                  <circle cx="11" cy="11" r="7" />
+                </svg>
+              </span>
+              <input
+                type="search"
+                value={busqueda}
+                onChange={(event) => setBusqueda(event.target.value)}
+                placeholder="Buscar por nombre"
+                className="h-10 w-full rounded-full border border-slate-300 bg-white pl-9 pr-4 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-fuchsia-400 focus:ring-2 focus:ring-fuchsia-100"
+              />
+            </label>
+
+            <select
+              value={ordenCatalogo}
+              onChange={(event) => setOrdenCatalogo(event.target.value)}
+              className="h-10 w-full rounded-full border border-slate-300 bg-white px-4 text-sm font-bold text-slate-700 outline-none transition focus:border-fuchsia-400 focus:ring-2 focus:ring-fuchsia-100"
+            >
+              <option value="nombre_asc">Nombre A-Z</option>
+              <option value="nombre_desc">Nombre Z-A</option>
+              <option value="precio_asc">Precio menor</option>
+              <option value="precio_desc">Precio mayor</option>
+            </select>
+          </div>
         </div>
 
         {loadingCatalogo ? (
           <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-72 animate-pulse rounded-2xl bg-white/50" />)}
+          </div>
+        ) : (
+          productosFiltrados.length === 0 ? (
+          <div className="rounded-2xl border border-slate-200 bg-white px-6 py-10 text-center shadow-sm">
+            <p className="text-sm font-bold text-slate-700">No se encontraron productos.</p>
+            <p className="mt-1 text-sm text-slate-500">Prueba con otro nombre o categoria.</p>
           </div>
         ) : (
           <div className="grid gap-5 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
@@ -363,6 +426,7 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
                 </article>
             ))}
           </div>
+        )
         )}
       </main>
 
