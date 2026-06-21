@@ -20,6 +20,8 @@ BEGIN;
 \i 05_migracion_rol_cliente.sql
 \i 07_migracion_descripcion_usuario.sql
 \i 08_migracion_pedidos_guardados.sql
+\i 09_migracion_pago_transacciones.sql
+\i 10_migracion_backfill_clientes_usuario.sql
 
 COMMIT;
 

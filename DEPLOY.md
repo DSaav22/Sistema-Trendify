@@ -67,14 +67,19 @@ gcloud sql users create trendify --instance=trendify-db --password=<DB_PASSWORD>
    .\cloud-sql-proxy.exe PROJECT_ID:southamerica-east1:trendify-db
    ```
 
-3. En otra terminal, aplicar schema:
+3. En otra terminal, aplicar schema + migraciones SQL:
    ```powershell
    $env:PGPASSWORD = '<DB_PASSWORD>'
    cd c:\Users\diego\Documents\GitHub\2026\backend\db
    $psql = 'C:\Program Files\PostgreSQL\18\bin\psql.exe'
    & $psql -U trendify -h 127.0.0.1 -d cosmetica_sistema -f 02_schema.sql
    & $psql -U trendify -h 127.0.0.1 -d cosmetica_sistema -f 03_seed.sql
+   & $psql -U trendify -h 127.0.0.1 -d cosmetica_sistema -f 04_migracion_pago_cu09.sql
    & $psql -U trendify -h 127.0.0.1 -d cosmetica_sistema -f 05_migracion_rol_cliente.sql
+   & $psql -U trendify -h 127.0.0.1 -d cosmetica_sistema -f 07_migracion_descripcion_usuario.sql
+   & $psql -U trendify -h 127.0.0.1 -d cosmetica_sistema -f 08_migracion_pedidos_guardados.sql
+   & $psql -U trendify -h 127.0.0.1 -d cosmetica_sistema -f 09_migracion_pago_transacciones.sql
+   & $psql -U trendify -h 127.0.0.1 -d cosmetica_sistema -f 10_migracion_backfill_clientes_usuario.sql
    ```
 
 4. Resetear passwords del seed apuntando al proxy:
@@ -84,9 +89,10 @@ gcloud sql users create trendify --instance=trendify-db --password=<DB_PASSWORD>
    .\.venv\Scripts\python.exe scripts\reset_passwords_and_list_users.py
    ```
 
-5. Marcar las migraciones de Django como aplicadas (porque las tablas ya las creó el SQL):
+5. Marcar las migraciones de Django como aplicadas (porque las tablas de negocio ya las creó el SQL):
    ```powershell
-   .\.venv\Scripts\python.exe manage.py migrate --fake
+   .\.venv\Scripts\python.exe manage.py migrate contenttypes auth admin sessions
+   .\.venv\Scripts\python.exe manage.py migrate catalogos --fake
    ```
 
 6. Detener el proxy (Ctrl+C en su terminal).
@@ -109,6 +115,9 @@ gcloud sql users create trendify --instance=trendify-db --password=<DB_PASSWORD>
 
 "https://FIREBASE_PROJECT_ID.web.app,https://FIREBASE_PROJECT_ID.firebaseapp.com" | `
   gcloud secrets create cors-origins --data-file=-
+
+"sk_live_REEMPLAZAR" | gcloud secrets create stripe-secret-key --data-file=-
+"whsec_REEMPLAZAR" | gcloud secrets create stripe-webhook-secret --data-file=-
 ```
 
 ### 3.2 Dar al service account de Cloud Run permiso para leer secrets
@@ -130,8 +139,8 @@ gcloud run deploy trendify-backend `
     --platform=managed `
     --allow-unauthenticated `
     --add-cloudsql-instances=PROJECT_ID:southamerica-east1:trendify-db `
-    --set-env-vars="DEBUG=False,ALLOWED_HOSTS=*.run.app" `
-    --set-secrets="SECRET_KEY=django-secret:latest,DATABASE_URL=db-url:latest,CORS_ALLOWED_ORIGINS=cors-origins:latest,CSRF_TRUSTED_ORIGINS=cors-origins:latest"
+    --set-env-vars="DEBUG=False,ALLOWED_HOSTS=*.run.app,STRIPE_CURRENCY=bob,FRONTEND_PUBLIC_URL=https://FIREBASE_PROJECT_ID.web.app" `
+    --set-secrets="SECRET_KEY=django-secret:latest,DATABASE_URL=db-url:latest,CORS_ALLOWED_ORIGINS=cors-origins:latest,CSRF_TRUSTED_ORIGINS=cors-origins:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest"
 ```
 
 Cloud Build subirá la imagen y al terminar imprime la URL pública:
@@ -152,6 +161,26 @@ curl https://trendify-backend-xxxxxxxx-rj.a.run.app/api/auth/login/ `
 Debe devolver `access_token`. Si falla, revisar logs:
 ```powershell
 gcloud run services logs read trendify-backend --region=southamerica-east1 --limit=50
+```
+
+### 3.5 Configurar webhook de Stripe (producción)
+
+En Stripe Dashboard (modo live), crear un webhook apuntando a:
+
+`https://trendify-backend-xxxxxxxx-rj.a.run.app/api/public/payments/webhook/stripe/`
+
+Eventos requeridos:
+- `checkout.session.completed`
+- `checkout.session.expired`
+- `payment_intent.succeeded`
+- `payment_intent.payment_failed`
+- `payment_intent.canceled`
+- `charge.failed`
+
+Copiar el `whsec_...` y actualizar el secret:
+
+```powershell
+echo "whsec_NUEVO" | gcloud secrets versions add stripe-webhook-secret --data-file=-
 ```
 
 ---

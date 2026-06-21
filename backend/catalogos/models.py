@@ -254,6 +254,34 @@ class DetalleVenta(models.Model):
         managed = False
 
 
+class PagoTransaccion(models.Model):
+    id_pago_transaccion = models.AutoField(primary_key=True)
+    id_venta = models.ForeignKey(
+        Venta,
+        on_delete=models.CASCADE,
+        db_column='id_venta',
+        related_name='transacciones_pago'
+    )
+    proveedor = models.CharField(max_length=30)
+    estado_pago = models.CharField(max_length=30)
+    monto = models.DecimalField(max_digits=12, decimal_places=2)
+    moneda = models.CharField(max_length=10, default='BOB')
+    id_transaccion_externa = models.CharField(max_length=120, blank=True, null=True)
+    idempotency_key = models.CharField(max_length=120, blank=True, null=True)
+    evento_webhook_id = models.CharField(max_length=120, blank=True, null=True)
+    detalle = models.TextField(blank=True, null=True)
+    creado_en = models.DateTimeField()
+    actualizado_en = models.DateTimeField()
+
+    def __str__(self):
+        return f'PagoTx #{self.id_pago_transaccion} - Venta #{self.id_venta_id}'
+
+    class Meta:
+        db_table = 'pagos_transacciones'
+        verbose_name_plural = 'Pagos Transacciones'
+        managed = False
+
+
 class PedidoGuardado(models.Model):
     id_pedido_guardado = models.AutoField(primary_key=True)
     id_cliente = models.ForeignKey(

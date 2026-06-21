@@ -1,9 +1,12 @@
 import csv
+import os
 from decimal import Decimal
 from io import BytesIO
+from urllib.parse import urlencode
 
 from django.db import transaction
 from django.db.models import Q
+from django.db.utils import OperationalError, ProgrammingError
 from django.http import HttpResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.template.loader import render_to_string
@@ -14,6 +17,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 from rest_framework import status, viewsets
 from rest_framework.response import Response
+import stripe
 
 # Importa modelos y serializers de esta misma app.
 from .models import (
@@ -28,6 +32,7 @@ from .models import (
     Marca,
     MovimientoInventario,
     PedidoGuardado,
+    PagoTransaccion,
     Producto,
     Proveedor,
     Rol,
@@ -83,6 +88,111 @@ def get_client_ip_from_request(request):
     if forwarded_for:
         return forwarded_for.split(',')[0].strip()
     return request.META.get('REMOTE_ADDR')
+
+
+def _estado_pago_desde_estado_venta(estado_venta):
+    estado = (estado_venta or '').strip().lower()
+    if estado == 'completada':
+        return 'confirmado'
+    if estado == 'rechazada':
+        return 'rechazado'
+    return 'pendiente'
+
+
+def _tabla_pago_transacciones_disponible():
+    try:
+        PagoTransaccion.objects.values_list('id_pago_transaccion', flat=True)[:1]
+        return True
+    except (ProgrammingError, OperationalError):
+        return False
+
+
+def _crear_pago_transaccion_segura(**kwargs):
+    if not _tabla_pago_transacciones_disponible():
+        return None
+    try:
+        return PagoTransaccion.objects.create(**kwargs)
+    except (ProgrammingError, OperationalError):
+        return None
+
+
+def _actualizar_ultima_pago_transaccion_segura(id_venta, **update_fields):
+    if not _tabla_pago_transacciones_disponible():
+        return
+    try:
+        tx = (
+            PagoTransaccion.objects
+            .filter(id_venta=id_venta)
+            .order_by('-id_pago_transaccion')
+            .first()
+        )
+        if tx is None:
+            return
+        for key, value in update_fields.items():
+            setattr(tx, key, value)
+        tx.actualizado_en = timezone.now()
+        tx.save(update_fields=[*list(update_fields.keys()), 'actualizado_en'])
+    except (ProgrammingError, OperationalError):
+        return
+
+
+def _stripe_config():
+    def _read_local_env_value(key):
+        env_path = os.path.join(os.path.dirname(__file__), '..', '.env.local')
+        env_path = os.path.abspath(env_path)
+        if not os.path.exists(env_path):
+            return ''
+        try:
+            with open(env_path, 'r', encoding='utf-8') as f:
+                for raw_line in f:
+                    line = raw_line.strip()
+                    if not line or line.startswith('#') or '=' not in line:
+                        continue
+                    k, v = line.split('=', 1)
+                    if k.strip() == key:
+                        return v.strip().strip('"').strip("'")
+        except OSError:
+            return ''
+        return ''
+
+    secret_key = (os.environ.get('STRIPE_SECRET_KEY') or _read_local_env_value('STRIPE_SECRET_KEY')).strip()
+    webhook_secret = (os.environ.get('STRIPE_WEBHOOK_SECRET') or _read_local_env_value('STRIPE_WEBHOOK_SECRET')).strip()
+    currency = (os.environ.get('STRIPE_CURRENCY') or _read_local_env_value('STRIPE_CURRENCY') or 'bob').strip().lower()
+    return secret_key, webhook_secret, currency
+
+
+def _build_frontend_checkout_urls(request, venta_id):
+    base_public = (os.environ.get('FRONTEND_PUBLIC_URL') or '').strip().rstrip('/')
+    if not base_public:
+        origin = (request.META.get('HTTP_ORIGIN') or '').strip().rstrip('/')
+        base_public = origin
+    if not base_public:
+        base_public = 'http://127.0.0.1:5173'
+
+    success_qs = urlencode({'stripe': 'success', 'venta_id': str(venta_id)})
+    cancel_qs = urlencode({'stripe': 'cancel', 'venta_id': str(venta_id)})
+    return (
+        f'{base_public}/?{success_qs}',
+        f'{base_public}/?{cancel_qs}',
+    )
+
+
+def _revertir_stock_venta(venta, usuario_actual, motivo):
+    if (venta.estado_venta or '').lower() == 'rechazada':
+        return False
+
+    with transaction.atomic():
+        for detalle in DetalleVenta.objects.filter(id_venta=venta).select_related('id_producto'):
+            MovimientoInventario.objects.create(
+                id_producto=detalle.id_producto,
+                id_usuario=usuario_actual,
+                tipo_movimiento='entrada',
+                cantidad=detalle.cantidad,
+                motivo=motivo,
+            )
+        venta.estado_venta = 'rechazada'
+        venta.save(update_fields=['estado_venta'])
+    return True
 
 
 class BitacoraMixin:
@@ -483,6 +593,11 @@ class VentaViewSet(BitacoraMixin, viewsets.ModelViewSet):
 
         venta.estado_venta = 'completada'
         venta.save(update_fields=['estado_venta'])
+        _actualizar_ultima_pago_transaccion_segura(
+            id_venta=venta,
+            estado_pago='confirmado',
+            detalle='Pago confirmado manualmente por el equipo.',
+        )
 
         self._registrar_bitacora(
             accion='CONFIRMAR_PAGO',
@@ -514,18 +629,16 @@ class VentaViewSet(BitacoraMixin, viewsets.ModelViewSet):
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
-        with transaction.atomic():
-            for detalle in DetalleVenta.objects.filter(id_venta=venta).select_related('id_producto'):
-                MovimientoInventario.objects.create(
-                    id_producto=detalle.id_producto,
-                    id_usuario=usuario_actual,
-                    tipo_movimiento='entrada',
-                    cantidad=detalle.cantidad,
-                    motivo=f'Reverso por venta rechazada #{venta.pk}',
-                )
-
-            venta.estado_venta = 'rechazada'
-            venta.save(update_fields=['estado_venta'])
+        _revertir_stock_venta(
+            venta=venta,
+            usuario_actual=usuario_actual,
+            motivo=f'Reverso por venta rechazada #{venta.pk}',
+        )
+        _actualizar_ultima_pago_transaccion_segura(
+            id_venta=venta,
+            estado_pago='rechazado',
+            detalle=f'Pago rechazado manualmente. Motivo: {motivo}.',
+        )
 
         self._registrar_bitacora(
             accion='RECHAZAR_PAGO',
@@ -628,6 +741,16 @@ class VentaViewSet(BitacoraMixin, viewsets.ModelViewSet):
 
             venta.monto_total = monto_total
             venta.save(update_fields=['monto_total', 'monto_recibido', 'vuelto'])
+            _crear_pago_transaccion_segura(
+                id_venta=venta,
+                proveedor='manual_pos',
+                estado_pago=_estado_pago_desde_estado_venta(venta.estado_venta),
+                monto=venta.monto_total,
+                moneda='BOB',
+                detalle=f'Pago registrado desde caja (metodo: {metodo_pago}).',
+                creado_en=timezone.now(),
+                actualizado_en=timezone.now(),
+            )
 
         self._registrar_bitacora(
             accion='INSERT',
@@ -792,8 +915,14 @@ class CompraViewSet(BitacoraMixin, viewsets.ModelViewSet):
         return Response(output.data, status=status.HTTP_201_CREATED, headers=headers)
 
 
-METODOS_PAGO_PUBLICOS = {'qr', 'transferencia', 'efectivo_contra_entrega'}
+METODOS_PAGO_PUBLICOS = {'qr', 'transferencia', 'efectivo_contra_entrega', 'stripe_card'}
 METODOS_PAGO_REQUIEREN_COMPROBANTE = {'qr', 'transferencia'}
+HEADER_IDEMPOTENCY_KEY = 'HTTP_X_IDEMPOTENCY_KEY'
+
+
+def _obtener_idempotency_key_checkout(request):
+    key = (request.META.get(HEADER_IDEMPOTENCY_KEY) or '').strip()
+    return key or None
 
 
 class CheckoutPublicoView(APIView):
@@ -808,6 +937,32 @@ class CheckoutPublicoView(APIView):
             metodo_pago = 'qr'
         numero_comprobante = (request.data.get('numero_comprobante') or '').strip() or None
         imagen_qr_url = (request.data.get('imagen_qr_url') or '').strip() or None
+        idempotency_key = _obtener_idempotency_key_checkout(request)
+
+        if idempotency_key and _tabla_pago_transacciones_disponible():
+            try:
+                tx_existente = (
+                    PagoTransaccion.objects
+                    .select_related('id_venta')
+                    .filter(idempotency_key=idempotency_key)
+                    .order_by('-id_pago_transaccion')
+                    .first()
+                )
+            except (ProgrammingError, OperationalError):
+                tx_existente = None
+
+            if tx_existente and tx_existente.id_venta:
+                venta_existente = tx_existente.id_venta
+                return Response(
+                    {
+                        'message': 'Pedido ya registrado previamente con la misma clave de idempotencia.',
+                        'id_venta': venta_existente.id_venta,
+                        'monto_total': str(venta_existente.monto_total),
+                        'estado_venta': venta_existente.estado_venta,
+                        'idempotent_replay': True,
+                    },
+                    status=status.HTTP_200_OK,
+                )
 
         if metodo_pago not in METODOS_PAGO_PUBLICOS:
             return Response(
@@ -831,6 +986,13 @@ class CheckoutPublicoView(APIView):
             telefono = cliente_autenticado.telefono or ''
             ciudad = cliente_autenticado.ciudad or ''
             direccion = cliente_autenticado.direccion or ''
+        elif usuario_autenticado and extract_user_role_id(usuario_autenticado) == ROLE_CLIENTE:
+            # Compatibilidad: algunos clientes existentes no tienen fila en `clientes`
+            # vinculada por id_usuario_fk. Creamos una ficha minima para no bloquear checkout.
+            nombre = str(getattr(usuario_autenticado, 'nombre_completo', '') or '').strip() or str(getattr(usuario_autenticado, 'username', '') or '').strip()
+            telefono = str(cliente_data.get('telefono') or '').strip()
+            ciudad = str(cliente_data.get('ciudad') or '').strip()
+            direccion = str(cliente_data.get('direccion') or '').strip()
         else:
             nombre = str(cliente_data.get('nombre') or '').strip()
             telefono = str(cliente_data.get('telefono') or '').strip()
@@ -862,7 +1024,7 @@ class CheckoutPublicoView(APIView):
             cliente = cliente_autenticado
 
             if not cliente:
-                cliente = Cliente.objects.filter(telefono=telefono).first()
+                cliente = Cliente.objects.filter(telefono=telefono).first() if telefono else None
                 if cliente is None:
                     cliente = Cliente.objects.create(
                         nombre_completo=nombre,
@@ -877,6 +1039,10 @@ class CheckoutPublicoView(APIView):
                     cliente.ciudad = ciudad
                     cliente.direccion = direccion
                     cliente.save(update_fields=['nombre_completo', 'ciudad', 'direccion'])
+
+                if usuario_autenticado and extract_user_role_id(usuario_autenticado) == ROLE_CLIENTE and not cliente.id_usuario_fk_id:
+                    cliente.id_usuario_fk = usuario_autenticado
+                    cliente.save(update_fields=['id_usuario_fk'])
 
             venta = Venta.objects.create(
                 id_cliente=cliente,
@@ -935,6 +1101,30 @@ class CheckoutPublicoView(APIView):
 
             venta.monto_total = monto_total
             venta.save(update_fields=['monto_total'])
+            estado_pago_inicial = (
+                'pendiente_pasarela'
+                if metodo_pago == 'stripe_card'
+                else (
+                    'pendiente_contra_entrega'
+                    if metodo_pago == 'efectivo_contra_entrega'
+                    else 'pendiente_validacion'
+                )
+            )
+            proveedor_checkout = 'stripe' if metodo_pago == 'stripe_card' else 'manual_checkout'
+            _crear_pago_transaccion_segura(
+                id_venta=venta,
+                proveedor=proveedor_checkout,
+                estado_pago=estado_pago_inicial,
+                monto=venta.monto_total,
+                moneda='BOB',
+                idempotency_key=idempotency_key,
+                detalle=(
+                    f'Checkout publico creado (metodo: {metodo_pago})'
+                    + (f' con comprobante {numero_comprobante}.' if numero_comprobante else '.')
+                ),
+                creado_en=timezone.now(),
+                actualizado_en=timezone.now(),
+            )
 
             # Bitacora del checkout publico (siempre contra usuario_sistema).
             Bitacora.objects.create(
@@ -952,6 +1142,84 @@ class CheckoutPublicoView(APIView):
                 direccion_ip=get_client_ip_from_request(request),
             )
 
+        if metodo_pago == 'stripe_card':
+            stripe_secret, _webhook_secret, stripe_currency = _stripe_config()
+            if not stripe_secret:
+                _revertir_stock_venta(
+                    venta=venta,
+                    usuario_actual=usuario_sistema,
+                    motivo=f'Reverso por fallo de configuracion Stripe en venta #{venta.pk}',
+                )
+                _actualizar_ultima_pago_transaccion_segura(
+                    id_venta=venta,
+                    estado_pago='error_configuracion',
+                    detalle='STRIPE_SECRET_KEY no configurada.',
+                )
+                return Response(
+                    {'detail': 'La pasarela Stripe no esta configurada en el servidor.'},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+
+            stripe.api_key = stripe_secret
+            success_url, cancel_url = _build_frontend_checkout_urls(request, venta.id_venta)
+            line_items = []
+            for detalle in DetalleVenta.objects.filter(id_venta=venta).select_related('id_producto'):
+                unit_amount = int((Decimal(str(detalle.precio_unitario)) * 100).quantize(Decimal('1')))
+                line_items.append(
+                    {
+                        'price_data': {
+                            'currency': stripe_currency,
+                            'product_data': {'name': detalle.id_producto.nombre},
+                            'unit_amount': unit_amount,
+                        },
+                        'quantity': int(detalle.cantidad),
+                    }
+                )
+
+            try:
+                session = stripe.checkout.Session.create(
+                    mode='payment',
+                    line_items=line_items,
+                    metadata={
+                        'id_venta': str(venta.id_venta),
+                        'metodo_pago': 'stripe_card',
+                    },
+                    success_url=success_url,
+                    cancel_url=cancel_url,
+                )
+            except Exception as exc:
+                _revertir_stock_venta(
+                    venta=venta,
+                    usuario_actual=usuario_sistema,
+                    motivo=f'Reverso por error Stripe en venta #{venta.pk}',
+                )
+                _actualizar_ultima_pago_transaccion_segura(
+                    id_venta=venta,
+                    estado_pago='error_pasarela',
+                    detalle=f'Error creando checkout Stripe: {exc}',
+                )
+                return Response(
+                    {'detail': 'No se pudo iniciar el checkout de Stripe. Intenta nuevamente.'},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+
+            _actualizar_ultima_pago_transaccion_segura(
+                id_venta=venta,
+                id_transaccion_externa=session.id,
+                detalle='Checkout Stripe creado correctamente.',
+            )
+            return Response(
+                {
+                    'message': 'Pedido registrado. Redirigiendo a Stripe Checkout...',
+                    'id_venta': venta.id_venta,
+                    'monto_total': str(venta.monto_total),
+                    'estado_venta': venta.estado_venta,
+                    'checkout_url': session.url,
+                    'pasarela': 'stripe',
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
         return Response(
             {
                 'message': 'Pedido registrado. Esta pendiente de validacion por el equipo.',
@@ -961,3 +1229,123 @@ class CheckoutPublicoView(APIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+class StripeWebhookView(APIView):
+    """Webhook preparado para Stripe.
+
+    Se deja listo para activacion cuando existan STRIPE_WEBHOOK_SECRET
+    y el flujo de payment_intent en frontend/backend.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        if not _tabla_pago_transacciones_disponible():
+            return Response(
+                {'detail': 'La tabla de transacciones de pago aun no esta disponible.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        stripe_secret, webhook_secret, stripe_currency = _stripe_config()
+        if not stripe_secret or not webhook_secret:
+            return Response(
+                {'detail': 'Webhook Stripe deshabilitado: faltan STRIPE_SECRET_KEY o STRIPE_WEBHOOK_SECRET.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        signature = request.META.get('HTTP_STRIPE_SIGNATURE', '')
+        if not signature:
+            return Response({'detail': 'Falta header Stripe-Signature.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        stripe.api_key = stripe_secret
+        try:
+            event = stripe.Webhook.construct_event(
+                payload=request.body,
+                sig_header=signature,
+                secret=webhook_secret,
+            )
+        except Exception:
+            return Response({'detail': 'Firma de webhook invalida.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        event_id = str(event.get('id') or '').strip()
+        event_type = str(event.get('type') or '').strip()
+        if not event_id:
+            return Response({'detail': 'Evento sin id.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            if PagoTransaccion.objects.filter(evento_webhook_id=event_id).exists():
+                return Response({'received': True, 'idempotent_replay': True}, status=status.HTTP_200_OK)
+        except (ProgrammingError, OperationalError):
+            return Response({'detail': 'No se pudo consultar eventos de pago.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        data_object = (event.get('data') or {}).get('object') or {}
+        metadata = data_object.get('metadata') or {}
+        venta_id_meta = metadata.get('id_venta')
+        checkout_session_id = None
+        payment_intent_id = None
+
+        if event_type.startswith('checkout.session'):
+            checkout_session_id = str(data_object.get('id') or '').strip() or None
+            payment_intent_id = str(data_object.get('payment_intent') or '').strip() or None
+        else:
+            payment_intent_id = str(data_object.get('id') or '').strip() or None
+
+        venta = None
+        if venta_id_meta:
+            venta = Venta.objects.filter(id_venta=venta_id_meta).first()
+        if venta is None and checkout_session_id:
+            tx = (
+                PagoTransaccion.objects
+                .select_related('id_venta')
+                .filter(id_transaccion_externa=checkout_session_id)
+                .order_by('-id_pago_transaccion')
+                .first()
+            )
+            if tx:
+                venta = tx.id_venta
+
+        if venta is None:
+            return Response({'detail': 'Evento recibido, pero sin venta vinculada.'}, status=status.HTTP_202_ACCEPTED)
+
+        estado_pago = 'pendiente'
+        detalle_estado = f'Webhook Stripe {event_type}'
+        cambio_estado = None
+        requiere_reversa_stock = False
+
+        if event_type in ('checkout.session.completed', 'payment_intent.succeeded'):
+            estado_pago = 'confirmado'
+            cambio_estado = 'completada'
+        elif event_type in ('checkout.session.expired', 'payment_intent.payment_failed', 'payment_intent.canceled', 'charge.failed'):
+            estado_pago = 'rechazado'
+            cambio_estado = 'rechazada'
+            requiere_reversa_stock = True
+
+        with transaction.atomic():
+            if cambio_estado == 'completada' and (venta.estado_venta or '').lower() == 'pendiente_validacion':
+                venta.estado_venta = 'completada'
+                venta.save(update_fields=['estado_venta'])
+
+            if cambio_estado == 'rechazada' and (venta.estado_venta or '').lower() == 'pendiente_validacion':
+                usuario_sistema = Usuario.objects.filter(id_usuario=1).first() or Usuario.objects.order_by('id_usuario').first()
+                if usuario_sistema and requiere_reversa_stock:
+                    _revertir_stock_venta(
+                        venta=venta,
+                        usuario_actual=usuario_sistema,
+                        motivo=f'Reverso automatico por webhook Stripe ({event_type}) venta #{venta.pk}',
+                    )
+
+            _crear_pago_transaccion_segura(
+                id_venta=venta,
+                proveedor='stripe',
+                estado_pago=estado_pago,
+                monto=venta.monto_total,
+                moneda=stripe_currency.upper(),
+                id_transaccion_externa=payment_intent_id or checkout_session_id,
+                evento_webhook_id=event_id,
+                detalle=detalle_estado,
+                creado_en=timezone.now(),
+                actualizado_en=timezone.now(),
+            )
+
+        return Response({'received': True}, status=status.HTTP_200_OK)

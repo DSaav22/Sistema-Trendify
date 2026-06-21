@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 
 import dj_database_url
+from corsheaders.defaults import default_headers
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -113,6 +114,10 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024
 CORS_ALLOWED_ORIGINS = _split_csv(os.environ.get('CORS_ALLOWED_ORIGINS', ''))
 CORS_ALLOW_ALL_ORIGINS = DEBUG and not CORS_ALLOWED_ORIGINS
 CORS_ALLOW_CREDENTIALS = True
+# Header custom usado por checkout público para idempotencia.
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    'x-idempotency-key',
+]
 
 CSRF_TRUSTED_ORIGINS = _split_csv(os.environ.get('CSRF_TRUSTED_ORIGINS', ''))
 

@@ -10,3 +10,4 @@ django
 djangorestframework
 PyJWT
 django-cors-headers
+stripe

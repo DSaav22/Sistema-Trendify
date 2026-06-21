@@ -55,20 +55,41 @@ class UsuarioSerializer(serializers.ModelSerializer):
 
         with transaction.atomic():
             usuario = super().create(validated_data)
-            # Make sure Cliente exists if rol is 3
-            if getattr(usuario.id_rol, 'id_rol', None) == 3:
-                Cliente.objects.create(
+            # Si el usuario se crea con rol Cliente (6), garantizar su ficha en
+            # la tabla `clientes` vinculada por id_usuario_fk.
+            if getattr(usuario.id_rol, 'id_rol', None) == 6:
+                Cliente.objects.get_or_create(
                     id_usuario_fk=usuario,
-                    nombre_completo=usuario.nombre_completo,
-                    estado=usuario.estado
+                    defaults={
+                        'nombre_completo': usuario.nombre_completo,
+                        'telefono': '',
+                        'ciudad': '',
+                        'direccion': '',
+                        'es_top': False,
+                        'estado': usuario.estado or 'activo',
+                    },
                 )
             return usuario
 
     def update(self, instance, validated_data):
+        from .models import Cliente
         password = validated_data.get('password_hash')
         if password and not str(password).startswith('pbkdf2_'):
             validated_data['password_hash'] = make_password(password)
-        return super().update(instance, validated_data)
+        usuario = super().update(instance, validated_data)
+        if getattr(usuario.id_rol, 'id_rol', None) == 6:
+            Cliente.objects.get_or_create(
+                id_usuario_fk=usuario,
+                defaults={
+                    'nombre_completo': usuario.nombre_completo,
+                    'telefono': '',
+                    'ciudad': '',
+                    'direccion': '',
+                    'es_top': False,
+                    'estado': usuario.estado or 'activo',
+                },
+            )
+        return usuario
 
 
 class ClienteSerializer(serializers.ModelSerializer):

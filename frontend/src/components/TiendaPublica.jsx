@@ -98,6 +98,32 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
     };
   }, []);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const stripeState = params.get('stripe');
+    const ventaId = params.get('venta_id');
+    if (!stripeState) return;
+
+    if (stripeState === 'success') {
+      setCheckoutSuccess(
+        ventaId
+          ? `Pago confirmado en Stripe para pedido #${ventaId}.`
+          : 'Pago confirmado en Stripe.'
+      );
+      setCarrito([]);
+      setNumeroComprobante('');
+      setMetodoPago('qr');
+    } else if (stripeState === 'cancel') {
+      setCheckoutError(
+        ventaId
+          ? `Pago cancelado para pedido #${ventaId}. Puedes volver a intentarlo.`
+          : 'Pago cancelado. Puedes volver a intentarlo.'
+      );
+    }
+
+    window.history.replaceState({}, '', window.location.pathname);
+  }, []);
+
   const itemsCount = useMemo(
     () => carrito.reduce((acc, item) => acc + item.cantidad, 0),
     [carrito]
@@ -342,6 +368,9 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
 
     setSubmittingCheckout(true);
     try {
+      const idempotencyKey = window.crypto?.randomUUID
+        ? window.crypto.randomUUID()
+        : `chk-${Date.now()}-${Math.random().toString(16).slice(2)}`;
       const payload = {
         cliente: isClienteAutenticado ? {} : {
           nombre: cliente.nombre.trim(),
@@ -357,7 +386,15 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
         })),
       };
 
-      const { data } = await api.post(PUBLIC_CHECKOUT_URL, payload);
+      const { data } = await api.post(PUBLIC_CHECKOUT_URL, payload, {
+        headers: { 'X-Idempotency-Key': idempotencyKey },
+      });
+
+      if (data?.checkout_url) {
+        window.location.href = data.checkout_url;
+        return;
+      }
+
       setCheckoutSuccess(
         `Pedido #${data.id_venta} registrado. Esta pendiente de validacion por el equipo.`
       );
@@ -742,6 +779,7 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
                     {[
                       { id: 'qr', label: 'Pago Movil / QR', desc: 'Escanea el QR y envia el comprobante.' },
                       { id: 'transferencia', label: 'Transferencia bancaria', desc: 'Realiza la transferencia y envia el numero de operacion.' },
+                      { id: 'stripe_card', label: 'Tarjeta (Stripe)', desc: 'Seras redirigido a Checkout seguro de Stripe.' },
                       { id: 'efectivo_contra_entrega', label: 'Efectivo contra entrega', desc: 'Pagas al recibir el pedido.' },
                     ].map((opt) => (
                       <label

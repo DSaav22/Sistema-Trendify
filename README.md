@@ -90,6 +90,10 @@ Set-Location backend\db
 Set-Location ..\..
 ```
 
+Ese script ya aplica también:
+- `09_migracion_pago_transacciones.sql` (trazabilidad de pagos)
+- `10_migracion_backfill_clientes_usuario.sql` (vincula usuarios cliente antiguos con tabla `clientes`)
+
 ### 3. Migraciones Django (solo la primera vez)
 
 El schema SQL ya crea las tablas de negocio (`catalogos`, etc.). Las tablas **internas de Django** (`django_content_type`, `auth_*`, etc.) **no** vienen en ese SQL; hay que crearlas con migraciones reales.
@@ -152,6 +156,47 @@ El proxy de Vite envía `/api` al backend ([frontend/vite.config.js](frontend/vi
 ---
 
 ## Solución de problemas
+
+### Stripe (modo prueba) — configuración mínima
+
+La integración quedó preparada para Stripe Checkout en test mode.
+
+#### Variables de entorno backend
+
+Configura estas variables en tu entorno (o en `.env` si usas Docker Compose):
+
+```env
+STRIPE_SECRET_KEY=sk_test_xxx
+STRIPE_WEBHOOK_SECRET=whsec_xxx
+STRIPE_CURRENCY=bob
+FRONTEND_PUBLIC_URL=http://127.0.0.1:5173
+```
+
+> En Docker, `FRONTEND_PUBLIC_URL` normalmente es `http://127.0.0.1:5175`.
+
+#### Endpoints Stripe habilitados
+
+- Checkout público: `POST /api/public/checkout/` con `metodo_pago: "stripe_card"`
+- Webhook Stripe: `POST /api/public/payments/webhook/stripe/`
+
+#### Crear webhook en Stripe (test)
+
+Suscribe estos eventos:
+
+- `checkout.session.completed`
+- `checkout.session.expired`
+- `payment_intent.succeeded`
+- `payment_intent.payment_failed`
+- `payment_intent.canceled`
+
+#### Prueba local con Stripe CLI
+
+```powershell
+stripe login
+stripe listen --forward-to http://127.0.0.1:8000/api/public/payments/webhook/stripe/
+```
+
+El comando `stripe listen` te devuelve un `whsec_...`; úsalo en `STRIPE_WEBHOOK_SECRET`.
 
 ### `no existe la relación django_content_type` al hacer `migrate --fake`
 

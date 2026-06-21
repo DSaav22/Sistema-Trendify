@@ -19,6 +19,7 @@ from .views import (
     ProveedorViewSet,
     ReciboVentaView,
     RolViewSet,
+    StripeWebhookView,
     UsuarioViewSet,
     VentaViewSet,
     MisPedidosView,
@@ -54,6 +55,7 @@ urlpatterns = [
     path('pedidos-guardados/<int:pk>/', PedidoGuardadoDetalleView.as_view(), name='pedido-guardado-detalle'),
     path('ventas/<int:pk>/recibo/', ReciboVentaView.as_view(), name='venta-recibo'),
     path('public/checkout/', CheckoutPublicoView.as_view(), name='checkout-publico'),
+    path('public/payments/webhook/stripe/', StripeWebhookView.as_view(), name='webhook-stripe'),
     path('public/', include(public_router.urls)),
     path('', include(router.urls)),
 ]

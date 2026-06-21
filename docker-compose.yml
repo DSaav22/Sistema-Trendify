@@ -15,6 +15,9 @@ services:
       - ./backend/db/04_migracion_pago_cu09.sql:/docker-entrypoint-initdb.d/03_migracion_pago.sql:ro
       - ./backend/db/05_migracion_rol_cliente.sql:/docker-entrypoint-initdb.d/04_migracion_rol_cliente.sql:ro
       - ./backend/db/07_migracion_descripcion_usuario.sql:/docker-entrypoint-initdb.d/05_migracion_descripcion_usuario.sql:ro
+      - ./backend/db/08_migracion_pedidos_guardados.sql:/docker-entrypoint-initdb.d/06_migracion_pedidos_guardados.sql:ro
+      - ./backend/db/09_migracion_pago_transacciones.sql:/docker-entrypoint-initdb.d/07_migracion_pago_transacciones.sql:ro
+      - ./backend/db/10_migracion_backfill_clientes_usuario.sql:/docker-entrypoint-initdb.d/08_migracion_backfill_clientes_usuario.sql:ro
     ports:
       # 5433 en el host evita choque con PostgreSQL local en 5432
       - "5433:5432"
@@ -34,6 +37,10 @@ services:
       DEBUG: "True"
       SECRET_KEY: django-insecure-docker-dev-only
       ALLOWED_HOSTS: "*"
+      FRONTEND_PUBLIC_URL: ${FRONTEND_PUBLIC_URL:-http://127.0.0.1:5175}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_CURRENCY: ${STRIPE_CURRENCY:-bob}
     volumes:
       - ./backend:/app
     ports:
