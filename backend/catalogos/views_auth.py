@@ -89,12 +89,18 @@ def _esta_bloqueada(username):
 
 
 class RegistroClienteSerializer(serializers.Serializer):
-    username = serializers.CharField(max_length=60)
+    username = serializers.EmailField(max_length=60)
     password = serializers.CharField(write_only=True, min_length=6)
+    password_confirm = serializers.CharField(write_only=True, min_length=6)
     nombre_completo = serializers.CharField(max_length=150)
-    telefono = serializers.CharField(max_length=25, required=False, allow_blank=True)
-    ciudad = serializers.CharField(max_length=100, required=False, allow_blank=True)
-    direccion = serializers.CharField(required=False, allow_blank=True)
+    telefono = serializers.CharField(max_length=25)
+    ciudad = serializers.CharField(max_length=100)
+    direccion = serializers.CharField()
+
+    def validate(self, attrs):
+        if attrs['password'] != attrs['password_confirm']:
+            raise serializers.ValidationError({'password_confirm': 'Las contrasenas no coinciden.'})
+        return attrs
 
 
 class LoginSerializer(serializers.Serializer):
@@ -128,6 +134,12 @@ class RegistroClienteView(APIView):
 
         if Usuario.objects.filter(username=username).exists():
             return Response({'detail': 'El nombre de usuario (email) ya esta en uso.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if telefono and Cliente.objects.filter(telefono=telefono).exists():
+            return Response(
+                {'detail': 'El telefono ya esta registrado. Inicia sesion o usa otro numero.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # Buscar el Rol de Cliente (id_rol = 6)
         rol_cliente = Rol.objects.filter(id_rol=6).first()

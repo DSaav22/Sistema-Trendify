@@ -67,3 +67,5 @@ CLAUDE.md
 # --- Logs genéricos ---
 logs/
 *.log
+docs/
+scripts/

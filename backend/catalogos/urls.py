@@ -10,7 +10,9 @@ from .views import (
     ClienteViewSet,
     CompraViewSet,
     InventarioViewSet,
+    MarcaPublicaViewSet,
     MarcaViewSet,
+    MiPerfilClienteView,
     MovimientoInventarioViewSet,
     PedidoGuardadoDetalleView,
     PedidosGuardadosView,
@@ -24,6 +26,7 @@ from .views import (
     VentaViewSet,
     MisPedidosView,
 )
+from .views_reportes import ReportesViewSet
 from .views_auth import CambiarPasswordView, LoginView, LogoutView, RegistroClienteView
 
 router = DefaultRouter()
@@ -42,7 +45,10 @@ router.register(r'compras', CompraViewSet, basename='compra')
 
 public_router = DefaultRouter()
 public_router.register(r'categorias', CategoriaPublicaViewSet, basename='categoria-publica')
+public_router.register(r'marcas', MarcaPublicaViewSet, basename='marca-publica')
 public_router.register(r'productos', ProductoPublicoViewSet, basename='producto-publico')
+
+router.register(r'reportes', ReportesViewSet, basename='reportes')
 
 urlpatterns = [
     # Habilita endpoints CRUD automaticos de DRF.
@@ -51,6 +57,7 @@ urlpatterns = [
     path('auth/logout/', LogoutView.as_view(), name='auth-logout'),
     path('auth/cambiar-password/', CambiarPasswordView.as_view(), name='auth-cambiar-password'),
     path('mis-pedidos/', MisPedidosView.as_view(), name='mis-pedidos'),
+    path('mi-perfil-cliente/', MiPerfilClienteView.as_view(), name='mi-perfil-cliente'),
     path('pedidos-guardados/', PedidosGuardadosView.as_view(), name='pedidos-guardados'),
     path('pedidos-guardados/<int:pk>/', PedidoGuardadoDetalleView.as_view(), name='pedido-guardado-detalle'),
     path('ventas/<int:pk>/recibo/', ReciboVentaView.as_view(), name='venta-recibo'),

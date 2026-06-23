@@ -124,6 +124,9 @@ CSRF_TRUSTED_ORIGINS = _split_csv(os.environ.get('CSRF_TRUSTED_ORIGINS', ''))
 # Detras de un proxy con TLS (Cloud Run, etc.), confiar en X-Forwarded-Proto
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
+# Token de acceso (minutos). Subir en demo/defensa para evitar 403 por expiracion.
+JWT_ACCESS_TOKEN_MINUTES = int(os.environ.get('JWT_ACCESS_TOKEN_MINUTES', '120'))
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'catalogos.authentication.CustomJWTAuthentication',

@@ -185,7 +185,7 @@ CREATE TABLE ventas (
     fecha_hora TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     monto_total NUMERIC(12,2) NOT NULL,
     metodo_pago VARCHAR(30) NOT NULL,
-    estado_venta VARCHAR(20) NOT NULL,
+    estado_venta VARCHAR(30) NOT NULL,
     monto_recibido NUMERIC(12,2),
     vuelto NUMERIC(12,2),
     numero_comprobante VARCHAR(100),

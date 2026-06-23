@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import api from './src/utils/api';
+import { filtrarPorTexto, sanitizeTelefono } from './src/utils/formHelpers';
 
 const API_URL = '/api/proveedores/';
 
@@ -16,6 +17,7 @@ export default function ProveedoresManager() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [editingId, setEditingId] = useState(null);
+  const [busqueda, setBusqueda] = useState('');
   const [formData, setFormData] = useState(EMPTY_FORM);
 
   const fetchProveedores = async () => {
@@ -36,9 +38,15 @@ export default function ProveedoresManager() {
     fetchProveedores();
   }, []);
 
+  const proveedoresFiltrados = useMemo(
+    () => filtrarPorTexto(proveedores, busqueda, ['nombre_empresa', 'contacto', 'telefono']),
+    [proveedores, busqueda]
+  );
+
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+    const nextValue = name === 'telefono' ? sanitizeTelefono(value) : value;
+    setFormData((prev) => ({ ...prev, [name]: nextValue }));
   };
 
   const resetForm = () => {
@@ -58,7 +66,7 @@ export default function ProveedoresManager() {
     const payload = {
       nombre_empresa: formData.nombre_empresa.trim(),
       contacto: formData.contacto.trim(),
-      telefono: formData.telefono.trim(),
+      telefono: sanitizeTelefono(formData.telefono),
       estado: formData.estado || 'activo',
     };
 
@@ -133,9 +141,10 @@ export default function ProveedoresManager() {
             className="rounded-lg border border-slate-300 px-3 py-2 outline-none transition focus:border-sky-500"
           />
           <input
-            type="text"
+            type="tel"
+            inputMode="numeric"
             name="telefono"
-            placeholder="Telefono"
+            placeholder="Telefono (solo numeros)"
             value={formData.telefono}
             onChange={handleChange}
             className="rounded-lg border border-slate-300 px-3 py-2 outline-none transition focus:border-sky-500"
@@ -184,6 +193,16 @@ export default function ProveedoresManager() {
           </p>
         )}
 
+        <div className="mb-4">
+          <input
+            type="search"
+            value={busqueda}
+            onChange={(e) => setBusqueda(e.target.value)}
+            placeholder="Buscar por empresa, contacto o telefono..."
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-sky-500"
+          />
+        </div>
+
         <div className="overflow-x-auto max-w-full rounded-xl border border-slate-200">
           <table className="min-w-full border-collapse text-left text-sm whitespace-nowrap">
             <thead>
@@ -203,14 +222,14 @@ export default function ProveedoresManager() {
                     Cargando proveedores...
                   </td>
                 </tr>
-              ) : proveedores.length === 0 ? (
+              ) : proveedoresFiltrados.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
-                    No hay proveedores registrados.
+                    {busqueda ? 'No hay proveedores que coincidan con la busqueda.' : 'No hay proveedores registrados.'}
                   </td>
                 </tr>
               ) : (
-                proveedores.map((proveedor) => (
+                proveedoresFiltrados.map((proveedor) => (
                   <tr key={proveedor.id_proveedor} className="border-b border-slate-100 bg-white">
                     <td className="px-3 py-2 text-slate-700">{proveedor.id_proveedor}</td>
                     <td className="px-3 py-2 font-medium text-slate-800">

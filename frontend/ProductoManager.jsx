@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from './src/utils/api';
+import { filtrarPorTexto, obtenerImagenesProducto } from './src/utils/formHelpers';
 
 const API_BASE = '/api';
 const PRODUCTOS_URL = `${API_BASE}/productos/`;
@@ -38,14 +39,20 @@ export default function ProductoManager() {
   const [success, setSuccess] = useState('');
 
   const [formData, setFormData] = useState(EMPTY_FORM);
-  const [imagenDataUri, setImagenDataUri] = useState('');
+  const [imagenesDataUri, setImagenesDataUri] = useState([]);
   const [editingId, setEditingId] = useState(null);
+  const [busqueda, setBusqueda] = useState('');
 
   // Modal "Nueva marca"
   const [mostrarModalMarca, setMostrarModalMarca] = useState(false);
   const [nuevaMarcaNombre, setNuevaMarcaNombre] = useState('');
   const [creandoMarca, setCreandoMarca] = useState(false);
   const [errorMarca, setErrorMarca] = useState('');
+
+  const productosFiltrados = useMemo(
+    () => filtrarPorTexto(productos, busqueda, ['nombre', 'descripcion', 'categoria_nombre']),
+    [productos, busqueda]
+  );
 
   const canSubmit = useMemo(() => {
     return (
@@ -101,20 +108,20 @@ export default function ProductoManager() {
 
     try {
       const dataUri = await leerArchivoComoDataUri(file);
-      setImagenDataUri(dataUri);
+      setImagenesDataUri((prev) => [...prev, dataUri]);
     } catch (err) {
       console.error('Error leyendo imagen:', err);
       setError('No se pudo leer la imagen seleccionada.');
     }
   };
 
-  const quitarImagen = () => {
-    setImagenDataUri('');
+  const quitarImagen = (indice) => {
+    setImagenesDataUri((prev) => prev.filter((_, idx) => idx !== indice));
   };
 
   const resetForm = () => {
     setFormData(EMPTY_FORM);
-    setImagenDataUri('');
+    setImagenesDataUri([]);
     setEditingId(null);
   };
 
@@ -131,7 +138,7 @@ export default function ProductoManager() {
       id_categoria: String(producto.id_categoria ?? ''),
       id_marca: String(producto.id_marca ?? ''),
     });
-    setImagenDataUri(producto.atributos?.imagen_data_uri || '');
+    setImagenesDataUri(obtenerImagenesProducto(producto.atributos));
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -162,7 +169,8 @@ export default function ProductoManager() {
         id_marca: Number(formData.id_marca),
         atributos: {
           ...atributosBase,
-          imagen_data_uri: imagenDataUri || null,
+          imagen_data_uri: imagenesDataUri[0] || null,
+          imagenes_data_uri: imagenesDataUri.length ? imagenesDataUri : null,
         },
       };
 
@@ -341,10 +349,10 @@ export default function ProductoManager() {
             <option value="inactivo">Inactivo</option>
           </select>
 
-          <div className="md:col-span-2 xl:col-span-4 flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center">
+          <div className="md:col-span-2 xl:col-span-4 flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
             <div className="flex-1">
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-600">
-                Imagen del producto (opcional, max 10 MB)
+                Imagenes del producto (opcional, max 10 MB c/u)
               </label>
               <input
                 type="file"
@@ -352,22 +360,26 @@ export default function ProductoManager() {
                 onChange={handleImagenChange}
                 className="mt-1 block w-full text-sm text-slate-700 file:mr-3 file:rounded-md file:border-0 file:bg-slate-900 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white file:hover:bg-slate-800"
               />
-              {imagenDataUri && (
-                <button
-                  type="button"
-                  onClick={quitarImagen}
-                  className="mt-2 text-xs font-bold text-red-600 hover:underline"
-                >
-                  Quitar imagen
-                </button>
-              )}
             </div>
-            {imagenDataUri && (
-              <img
-                src={imagenDataUri}
-                alt="Preview"
-                className="h-24 w-24 rounded-xl object-cover ring-2 ring-slate-200"
-              />
+            {imagenesDataUri.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {imagenesDataUri.map((uri, idx) => (
+                  <div key={idx} className="relative">
+                    <img
+                      src={uri}
+                      alt={`Preview ${idx + 1}`}
+                      className="h-24 w-24 rounded-xl object-cover ring-2 ring-slate-200"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => quitarImagen(idx)}
+                      className="absolute -right-1 -top-1 rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white"
+                    >
+                      X
+                    </button>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
 
@@ -406,6 +418,16 @@ export default function ProductoManager() {
           <p className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{success}</p>
         )}
 
+        <div className="mb-4">
+          <input
+            type="search"
+            value={busqueda}
+            onChange={(e) => setBusqueda(e.target.value)}
+            placeholder="Buscar por nombre, descripcion o categoria..."
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-sky-500"
+          />
+        </div>
+
         <div className="overflow-x-auto max-w-full rounded-xl border border-slate-200">
           <table className="min-w-full text-left text-sm whitespace-nowrap">
             <thead className="bg-slate-50 text-slate-700">
@@ -426,16 +448,17 @@ export default function ProductoManager() {
                     Cargando datos...
                   </td>
                 </tr>
-              ) : productos.length === 0 ? (
+              ) : productosFiltrados.length === 0 ? (
                 <tr>
                   <td className="px-4 py-6 text-center text-slate-500" colSpan={7}>
-                    No hay productos registrados.
+                    {busqueda ? 'No hay productos que coincidan con la busqueda.' : 'No hay productos registrados.'}
                   </td>
                 </tr>
               ) : (
-                productos.map((producto) => {
+                productosFiltrados.map((producto) => {
                   const id = producto.id_producto ?? producto.id;
-                  const imagenProd = producto.atributos?.imagen_data_uri;
+                  const imagenes = obtenerImagenesProducto(producto.atributos);
+                  const imagenProd = imagenes[0];
                   return (
                     <tr key={id} className="border-t border-slate-100 hover:bg-slate-50/70">
                       <td className="px-4 py-3">

@@ -118,7 +118,7 @@ export default function Login({ onSuccess, minimal, onSwitchToRegister }) {
               disabled={loading}
               className="w-full rounded-xl bg-gradient-to-b from-slate-900 to-slate-950 py-3.5 text-sm font-bold tracking-wide text-white shadow-[0_14px_28px_-12px_rgba(2,6,23,0.75)] transition hover:from-slate-800 hover:to-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {loading ? 'Validando credenciales...' : 'Entrar al panel'}
+              {loading ? 'Validando credenciales...' : minimal ? 'Iniciar sesion' : 'Entrar al panel'}
             </button>
 
             {onSwitchToRegister && (

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import useInactivityLogout from './src/hooks/useInactivityLogout';
 import CategoriaManager from './CategoriaManager';
 import ClienteManager from './ClienteManager';
 import ProductoManager from './ProductoManager';
@@ -10,6 +11,12 @@ import RolManager from './RolManager';
 import CajaManager from './src/components/CajaManager';
 import PedidosOnlineManager from './src/components/PedidosOnlineManager';
 import BitacoraManager from './src/components/BitacoraManager';
+import ReportesDashboard from './src/components/ReportesDashboard';
+import ProductosTopView from './src/components/ProductosTopView';
+import ClientesFrecuentesView from './src/components/ClientesFrecuentesView';
+import AlertasPredictivasView from './src/components/AlertasPredictivasView';
+import TendenciasView from './src/components/TendenciasView';
+import AsistenteVoz from './src/components/AsistenteVoz';
 import Perfil from './src/components/Perfil';
 import Login from './src/components/Login';
 import TiendaPublica from './src/components/TiendaPublica';
@@ -32,6 +39,11 @@ const NAV_ITEMS = [
   { key: 'compras', label: 'Compras', icon: '📥', allowedRoles: [ROLE_ADMIN, ROLE_COMPRAS] },
   { key: 'caja', label: 'Caja / Ventas', icon: '🛒', allowedRoles: [ROLE_ADMIN, ROLE_VENDEDOR] },
   { key: 'pedidos_online', label: 'Pedidos Online', icon: '🛍️', allowedRoles: [ROLE_ADMIN, ROLE_VENDEDOR] },
+  { key: 'dashboard', label: 'Dashboard', icon: '📊', allowedRoles: [ROLE_ADMIN] },
+  { key: 'productos_top', label: 'Productos Top', icon: '🏆', allowedRoles: [ROLE_ADMIN, ROLE_VENDEDOR] },
+  { key: 'clientes_frecuentes', label: 'Clientes TOP', icon: '⭐', allowedRoles: [ROLE_ADMIN] },
+  { key: 'alertas_predictivas', label: 'Alertas Stock', icon: '⚠️', allowedRoles: [ROLE_ADMIN] },
+  { key: 'tendencias', label: 'Tendencias', icon: '📈', allowedRoles: [ROLE_ADMIN] },
   { key: 'inventario', label: 'Inventario', icon: '📦', allowedRoles: [ROLE_ADMIN, ROLE_VENDEDOR, ROLE_BODEGUERO, ROLE_COMPRAS] },
   { key: 'usuarios', label: 'Usuarios', icon: '🧑‍💼', allowedRoles: [ROLE_ADMIN] },
   { key: 'roles', label: 'Roles', icon: '🛡️', allowedRoles: [ROLE_ADMIN] },
@@ -40,7 +52,7 @@ const NAV_ITEMS = [
 ];
 
 export default function App() {
-  const { user, isReady, isAuthenticated, logout } = useAuth();
+  const { user, isReady, isAuthenticated, logout, expireByInactivity } = useAuth();
   const [activeView, setActiveView] = useState('inventario');
   const [publicView, setPublicView] = useState('store');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -80,7 +92,14 @@ export default function App() {
     return new Set(visibleNavItems.map((item) => item.key));
   }, [visibleNavItems]);
 
+  const inactivityEnabled = isAuthenticated && userRolId !== null && userRolId !== ROLE_CLIENTE;
+  useInactivityLogout(expireByInactivity, inactivityEnabled);
+
   const defaultAllowedView = useMemo(() => {
+    if (userRolId === ROLE_ADMIN && allowedViewKeys.has('dashboard')) {
+      return 'dashboard';
+    }
+
     if (allowedViewKeys.has('inventario')) {
       return 'inventario';
     }
@@ -90,7 +109,7 @@ export default function App() {
     }
 
     return visibleNavItems[0]?.key || null;
-  }, [allowedViewKeys, visibleNavItems]);
+  }, [allowedViewKeys, visibleNavItems, userRolId]);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -127,6 +146,16 @@ export default function App() {
         return <CajaManager />;
       case 'pedidos_online':
         return <PedidosOnlineManager />;
+      case 'dashboard':
+        return <ReportesDashboard onNavigate={setActiveView} />;
+      case 'productos_top':
+        return <ProductosTopView />;
+      case 'clientes_frecuentes':
+        return <ClientesFrecuentesView />;
+      case 'alertas_predictivas':
+        return <AlertasPredictivasView onNavigate={setActiveView} />;
+      case 'tendencias':
+        return <TendenciasView />;
       case 'inventario':
         return <InventarioDashboard />;
       case 'usuarios':
@@ -180,10 +209,12 @@ export default function App() {
     );
   }
 
+  const puedeUsarAsistente = userRolId === ROLE_ADMIN || userRolId === ROLE_VENDEDOR;
+
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900">
-      <div className="grid min-h-screen lg:grid-cols-[280px_1fr]">
-        <aside className={`fixed inset-y-0 left-0 z-40 w-72 transform overflow-y-auto bg-slate-900 px-5 py-6 text-slate-100 transition-transform duration-300 lg:static lg:w-auto lg:translate-x-0 ${mobileMenuOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'}`}>
+      <div className="grid min-h-screen lg:grid-cols-[280px_1fr] lg:items-start">
+        <aside className={`fixed inset-y-0 left-0 z-40 w-72 transform overflow-y-auto bg-slate-900 px-5 py-6 text-slate-100 transition-transform duration-300 lg:sticky lg:top-0 lg:max-h-screen lg:w-auto lg:translate-x-0 ${mobileMenuOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'}`}>
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(56,189,248,0.18),transparent_45%)]" />
           <div className="relative">
             <div className="mb-4 sm:mb-8 flex items-center justify-between">
@@ -240,7 +271,7 @@ export default function App() {
         )}
 
         <main className="min-w-0 flex-1 w-full max-w-full">
-          <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 backdrop-blur w-full">
+          <header className="relative z-10 border-b border-slate-200 bg-white w-full">
             <div className="mx-auto flex w-full max-w-[1500px] items-center justify-between px-4 sm:px-6 py-3 sm:py-4">
               <div className="flex items-center gap-3">
                 <button
@@ -286,6 +317,7 @@ export default function App() {
           <div className="mx-auto w-full max-w-[1500px] p-4 sm:p-6 overflow-x-hidden">{renderActiveView()}</div>
         </main>
       </div>
+      <AsistenteVoz onNavigate={setActiveView} allowed={puedeUsarAsistente} />
       <SessionExpiredModal />
     </div>
   );

@@ -1,9 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from './src/utils/api';
+import { filtrarPorTexto } from './src/utils/formHelpers';
 
 const PROVEEDORES_URL = '/api/proveedores/';
 const PRODUCTOS_URL = '/api/productos/';
 const COMPRAS_URL = '/api/compras/';
+
+const EMPTY_ITEM = {
+  id_producto: '',
+  cantidad: 1,
+  precio_unitario: '',
+  lote: '',
+  fecha_vencimiento: '',
+  stock_minimo: '',
+};
 
 function normalizeList(data) {
   if (Array.isArray(data)) return data;
@@ -20,18 +30,125 @@ function formatCurrency(value) {
   });
 }
 
+function formatDate(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('es-BO', { dateStyle: 'short', timeStyle: 'short' });
+}
+
+function CompraDetalleModal({ compra, open, onClose }) {
+  if (!open || !compra) return null;
+
+  const detalles = compra.detalles_compra || [];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4" onClick={onClose}>
+      <div
+        className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+          <div>
+            <h3 className="text-lg font-bold text-slate-900">Compra #{compra.id_compra}</h3>
+            <p className="text-sm text-slate-500">
+              {compra.proveedor_nombre || '-'} · {formatDate(compra.fecha_compra)}
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-100">
+            X
+          </button>
+        </div>
+
+        <div className="overflow-y-auto p-5">
+          <div className="mb-4 grid gap-2 text-sm sm:grid-cols-2">
+            <p><span className="font-semibold text-slate-600">Registrado por:</span> {compra.usuario_nombre || '-'}</p>
+            <p><span className="font-semibold text-slate-600">Estado:</span> {compra.estado_compra || '-'}</p>
+            <p className="sm:col-span-2">
+              <span className="font-semibold text-slate-600">Total:</span>{' '}
+              <span className="text-lg font-bold text-slate-900">{formatCurrency(compra.monto_total)}</span>
+            </p>
+          </div>
+
+          <h4 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">Items de la compra</h4>
+          {detalles.length === 0 ? (
+            <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-500">
+              No hay detalle de items disponible.
+            </p>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="min-w-full text-left text-sm">
+                <thead className="bg-slate-50 text-slate-700">
+                  <tr>
+                    <th className="px-3 py-2 font-semibold">Producto</th>
+                    <th className="px-3 py-2 font-semibold">Cant.</th>
+                    <th className="px-3 py-2 font-semibold">Precio</th>
+                    <th className="px-3 py-2 font-semibold">Lote</th>
+                    <th className="px-3 py-2 font-semibold">Subtotal</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detalles.map((det) => (
+                    <tr key={det.id_detalle_compra} className="border-t border-slate-100">
+                      <td className="px-3 py-2 text-slate-800">{det.producto_nombre || det.id_producto}</td>
+                      <td className="px-3 py-2 text-slate-700">{det.cantidad}</td>
+                      <td className="px-3 py-2 text-slate-700">{formatCurrency(det.precio_unitario)}</td>
+                      <td className="px-3 py-2 text-slate-600">{det.lote || '-'}</td>
+                      <td className="px-3 py-2 font-medium text-slate-800">{formatCurrency(det.subtotal)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="border-t border-slate-100 p-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800"
+          >
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ComprasManager() {
   const [proveedores, setProveedores] = useState([]);
   const [productos, setProductos] = useState([]);
   const [comprasPrevias, setComprasPrevias] = useState([]);
 
   const [idProveedor, setIdProveedor] = useState('');
-  const [items, setItems] = useState([]);
+  const [items, setItems] = useState([EMPTY_ITEM]);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+
+  const [busquedaCompras, setBusquedaCompras] = useState('');
+  const [busquedaProducto, setBusquedaProducto] = useState('');
+  const [compraDetalle, setCompraDetalle] = useState(null);
+
+  const productosFiltrados = useMemo(
+    () => filtrarPorTexto(productos, busquedaProducto, ['nombre', 'descripcion']),
+    [productos, busquedaProducto]
+  );
+
+  const comprasFiltradas = useMemo(() => {
+    const q = busquedaCompras.trim().toLowerCase();
+    if (!q) return comprasPrevias;
+    return comprasPrevias.filter(
+      (c) =>
+        String(c.id_compra).includes(q) ||
+        String(c.proveedor_nombre || '').toLowerCase().includes(q) ||
+        String(c.usuario_nombre || '').toLowerCase().includes(q)
+    );
+  }, [comprasPrevias, busquedaCompras]);
 
   const totalCompra = useMemo(
     () =>
@@ -53,7 +170,7 @@ export default function ComprasManager() {
       ]);
       setProveedores(normalizeList(provResp.data).filter((p) => (p.estado || '').toLowerCase() === 'activo'));
       setProductos(normalizeList(prodResp.data));
-      setComprasPrevias(normalizeList(comprasResp.data).slice(0, 10));
+      setComprasPrevias(normalizeList(comprasResp.data));
     } catch (err) {
       console.error('Error cargando datos de compras:', err);
       setError('No se pudieron cargar proveedores/productos/compras.');
@@ -67,17 +184,7 @@ export default function ComprasManager() {
   }, []);
 
   const agregarItem = () => {
-    setItems((prev) => [
-      ...prev,
-      {
-        id_producto: '',
-        cantidad: 1,
-        precio_unitario: '',
-        lote: '',
-        fecha_vencimiento: '',
-        stock_minimo: '',
-      },
-    ]);
+    setItems((prev) => [...prev, { ...EMPTY_ITEM }]);
   };
 
   const actualizarItem = (index, campo, valor) => {
@@ -154,7 +261,7 @@ export default function ComprasManager() {
 
       const { data } = await api.post(COMPRAS_URL, payload);
       setSuccess(`Compra #${data.id_compra} registrada por ${formatCurrency(data.monto_total)}.`);
-      setItems([]);
+      setItems([{ ...EMPTY_ITEM }]);
       setIdProveedor('');
       await cargarDatos();
     } catch (err) {
@@ -204,15 +311,24 @@ export default function ComprasManager() {
           </select>
         </div>
 
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h4 className="text-sm font-semibold uppercase tracking-wider text-slate-600">Items</h4>
-          <button
-            type="button"
-            onClick={agregarItem}
-            className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-slate-800"
-          >
-            + Agregar item
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <input
+              type="search"
+              value={busquedaProducto}
+              onChange={(e) => setBusquedaProducto(e.target.value)}
+              placeholder="Filtrar productos..."
+              className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-sky-500"
+            />
+            <button
+              type="button"
+              onClick={agregarItem}
+              className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-slate-800"
+            >
+              + Agregar item
+            </button>
+          </div>
         </div>
 
         <div className="overflow-x-auto rounded-xl border border-slate-200">
@@ -245,10 +361,10 @@ export default function ComprasManager() {
                         <select
                           value={it.id_producto}
                           onChange={(e) => actualizarItem(i, 'id_producto', e.target.value)}
-                          className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm"
+                          className="w-full min-w-[180px] rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm"
                         >
                           <option value="">Selecciona</option>
-                          {productos.map((p) => (
+                          {productosFiltrados.map((p) => (
                             <option key={p.id_producto} value={p.id_producto}>
                               {p.nombre}
                             </option>
@@ -307,7 +423,8 @@ export default function ComprasManager() {
                         <button
                           type="button"
                           onClick={() => eliminarItem(i)}
-                          className="rounded-md bg-red-600 px-2 py-1 text-xs text-white transition hover:bg-red-700"
+                          disabled={items.length <= 1}
+                          className="rounded-md bg-red-600 px-2 py-1 text-xs text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           Eliminar
                         </button>
@@ -336,7 +453,25 @@ export default function ComprasManager() {
       </article>
 
       <article className="mt-6 min-w-0 rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
-        <h3 className="mb-4 text-lg font-semibold text-slate-800">Ultimas compras</h3>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h3 className="text-lg font-semibold text-slate-800">Historial de compras</h3>
+          <button
+            type="button"
+            onClick={cargarDatos}
+            disabled={loading}
+            className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            {loading ? 'Actualizando...' : 'Actualizar'}
+          </button>
+        </div>
+
+        <input
+          type="search"
+          value={busquedaCompras}
+          onChange={(e) => setBusquedaCompras(e.target.value)}
+          placeholder="Buscar por ID, proveedor o usuario..."
+          className="mb-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-sky-500"
+        />
 
         <div className="overflow-x-auto rounded-xl border border-slate-200">
           <table className="min-w-full text-left text-sm whitespace-nowrap">
@@ -344,28 +479,40 @@ export default function ComprasManager() {
               <tr>
                 <th className="px-3 py-2 font-semibold">ID</th>
                 <th className="px-3 py-2 font-semibold">Proveedor</th>
+                <th className="px-3 py-2 font-semibold">Usuario</th>
                 <th className="px-3 py-2 font-semibold">Fecha</th>
+                <th className="px-3 py-2 font-semibold">Items</th>
                 <th className="px-3 py-2 font-semibold">Monto</th>
                 <th className="px-3 py-2 font-semibold">Estado</th>
+                <th className="px-3 py-2 font-semibold">Accion</th>
               </tr>
             </thead>
             <tbody>
-              {comprasPrevias.length === 0 ? (
+              {comprasFiltradas.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
-                    No hay compras registradas.
+                  <td colSpan={8} className="px-3 py-6 text-center text-slate-500">
+                    {busquedaCompras ? 'No hay compras que coincidan.' : 'No hay compras registradas.'}
                   </td>
                 </tr>
               ) : (
-                comprasPrevias.map((c) => (
-                  <tr key={c.id_compra} className="border-t border-slate-100">
-                    <td className="px-3 py-2 text-slate-700">{c.id_compra}</td>
+                comprasFiltradas.map((c) => (
+                  <tr key={c.id_compra} className="border-t border-slate-100 hover:bg-slate-50">
+                    <td className="px-3 py-2 font-medium text-slate-800">#{c.id_compra}</td>
                     <td className="px-3 py-2 text-slate-700">{c.proveedor_nombre || c.id_proveedor}</td>
-                    <td className="px-3 py-2 text-slate-700">
-                      {c.fecha_compra ? new Date(c.fecha_compra).toLocaleString('es-BO') : '-'}
-                    </td>
-                    <td className="px-3 py-2 text-slate-700">{formatCurrency(c.monto_total)}</td>
+                    <td className="px-3 py-2 text-slate-600">{c.usuario_nombre || '-'}</td>
+                    <td className="px-3 py-2 text-slate-700">{formatDate(c.fecha_compra)}</td>
+                    <td className="px-3 py-2 text-slate-700">{c.detalles_compra?.length || 0}</td>
+                    <td className="px-3 py-2 font-medium text-slate-800">{formatCurrency(c.monto_total)}</td>
                     <td className="px-3 py-2 text-slate-700">{c.estado_compra}</td>
+                    <td className="px-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() => setCompraDetalle(c)}
+                        className="rounded-md bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-700"
+                      >
+                        Ver detalle
+                      </button>
+                    </td>
                   </tr>
                 ))
               )}
@@ -373,6 +520,12 @@ export default function ComprasManager() {
           </table>
         </div>
       </article>
+
+      <CompraDetalleModal
+        compra={compraDetalle}
+        open={Boolean(compraDetalle)}
+        onClose={() => setCompraDetalle(null)}
+      />
     </section>
   );
 }

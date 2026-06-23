@@ -2,7 +2,7 @@
 
 Backend en **Google Cloud Run** + **Cloud SQL Postgres** · Frontend en **Firebase Hosting**.
 
-> **Estado:** Fase 1 (preparación de código) y Fase 4.1 (URLs del frontend) ya están aplicadas. Las fases 0, 2, 3, 4.2-4.3 y 5 requieren `gcloud` SDK (no instalado todavía). Esta guía documenta los comandos exactos para correr cuando lo tengas.
+> **Estado (jun 2026):** Producción activa en GCP/Firebase. Cuenta: `cisnerosderek39@gmail.com`. Proyecto: `sistema-de-informacion-1`. Config gcloud: `proyecto-si1-general`. Frontend: https://sistema-de-informacion-1.web.app · Backend: https://trendify-backend-354954646440.southamerica-east1.run.app · Gemini CU24 vía **Vertex AI** (sin API key en producción).
 
 ---
 
@@ -10,7 +10,7 @@ Backend en **Google Cloud Run** + **Cloud SQL Postgres** · Frontend en **Fireba
 
 | Variable | Ejemplo / cómo obtenerla |
 |---|---|
-| `PROJECT_ID` | de `gcloud init`, ej. `trendify-uagrm-2026` |
+| `PROJECT_ID` | `sistema-de-informacion-1` (proyecto GCP + Firebase vinculados) |
 | `REGION` | sugerido `southamerica-east1` (São Paulo) |
 | `INSTANCE_NAME` | sugerido `trendify-db` |
 | `INSTANCE_CONN_NAME` | `PROJECT_ID:REGION:INSTANCE_NAME` |
@@ -19,6 +19,8 @@ Backend en **Google Cloud Run** + **Cloud SQL Postgres** · Frontend en **Fireba
 | `BACKEND_URL` | la imprime `gcloud run deploy`, ej. `https://trendify-backend-xxxx-rj.a.run.app` |
 | `FIREBASE_PROJECT_ID` | de https://console.firebase.google.com |
 | `FIREBASE_URL` | `https://FIREBASE_PROJECT_ID.web.app` |
+| `GOOGLE_CLOUD_LOCATION` | `us-central1` (región Vertex AI para Gemini; Cloud Run sigue en `southamerica-east1`) |
+| `GEMINI_MODEL` | `gemini-2.5-flash` (CU24 — asistente de voz) |
 
 ---
 
@@ -30,13 +32,18 @@ Bajar de https://cloud.google.com/sdk/docs/install (Windows installer). Reinicia
 ```powershell
 gcloud version
 gcloud init    # login + crear/elegir proyecto
+
+# Trendify: usar siempre esta config antes de deploy
+gcloud config configurations activate proyecto-si1-general
+gcloud config get-value account    # cisnerosderek39@gmail.com
+gcloud config get-value project    # sistema-de-informacion-1
 ```
 
 ### 0.2 Habilitar billing y APIs
 1. Habilitar **billing** en https://console.cloud.google.com/billing (necesita tarjeta — el uso para defensa cabe en free tier).
 2. Habilitar APIs:
    ```powershell
-   gcloud services enable run.googleapis.com sqladmin.googleapis.com cloudbuild.googleapis.com secretmanager.googleapis.com
+   gcloud services enable run.googleapis.com sqladmin.googleapis.com cloudbuild.googleapis.com secretmanager.googleapis.com aiplatform.googleapis.com generativelanguage.googleapis.com
    ```
 
 ### 0.3 Crear proyecto Firebase
@@ -139,7 +146,7 @@ gcloud run deploy trendify-backend `
     --platform=managed `
     --allow-unauthenticated `
     --add-cloudsql-instances=PROJECT_ID:southamerica-east1:trendify-db `
-    --set-env-vars="DEBUG=False,ALLOWED_HOSTS=*.run.app,STRIPE_CURRENCY=bob,FRONTEND_PUBLIC_URL=https://FIREBASE_PROJECT_ID.web.app" `
+    --set-env-vars="DEBUG=False,ALLOWED_HOSTS=*,STRIPE_CURRENCY=BOB,FRONTEND_PUBLIC_URL=https://FIREBASE_PROJECT_ID.web.app,GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_PROJECT=PROJECT_ID,GOOGLE_CLOUD_LOCATION=us-central1,GEMINI_MODEL=gemini-2.5-flash" `
     --set-secrets="SECRET_KEY=django-secret:latest,DATABASE_URL=db-url:latest,CORS_ALLOWED_ORIGINS=cors-origins:latest,CSRF_TRUSTED_ORIGINS=cors-origins:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest"
 ```
 
@@ -182,6 +189,127 @@ Copiar el `whsec_...` y actualizar el secret:
 ```powershell
 echo "whsec_NUEVO" | gcloud secrets versions add stripe-webhook-secret --data-file=-
 ```
+
+### 3.6 Gemini / Vertex AI (CU24 — Asistente de voz)
+
+Trendify usa **Gemini con function calling** sobre datos reales de PostgreSQL (`backend/catalogos/views_asistente.py` + `asistente_tools.py`). En producción se conecta a Google Cloud **sin API key expuesta**, usando la identidad del servicio de Cloud Run (Application Default Credentials).
+
+#### Arquitectura
+
+```
+Frontend (Web Speech API)
+  → POST /api/reportes/asistente/
+  → Django (views_asistente.py)
+  → Vertex AI Gemini 2.5 Flash (function calling)
+  → asistente_tools.py → Cloud SQL Postgres
+```
+
+Las herramientas (`consultar_ventas_hoy`, `consultar_stock_producto`, etc.) reemplazan un motor RAG de GCP: los datos ya viven en la BD y Django los consulta.
+
+#### Setup en GCP (una sola vez)
+
+1. Habilitar APIs (incluido en Fase 0.2):
+   ```powershell
+   gcloud services enable aiplatform.googleapis.com generativelanguage.googleapis.com
+   ```
+
+2. Dar permiso Vertex AI a la cuenta de servicio de Cloud Run:
+   ```powershell
+   $PROJECT_NUMBER = gcloud projects describe PROJECT_ID --format="value(projectNumber)"
+   gcloud projects add-iam-policy-binding PROJECT_ID `
+     --member="serviceAccount:$PROJECT_NUMBER-compute@developer.gserviceaccount.com" `
+     --role="roles/aiplatform.user"
+   ```
+
+3. Variables de entorno en Cloud Run (ya incluidas en el deploy de 3.3):
+
+   | Variable | Valor producción |
+   |---|---|
+   | `GOOGLE_GENAI_USE_VERTEXAI` | `true` |
+   | `GOOGLE_CLOUD_PROJECT` | `sistema-de-informacion-1` |
+   | `GOOGLE_CLOUD_LOCATION` | `us-central1` |
+   | `GEMINI_MODEL` | `gemini-2.5-flash` |
+
+   Cloud Run corre en `southamerica-east1`; Vertex AI usa `us-central1` porque Gemini 2.5 Flash está disponible ahí. La latencia extra es aceptable para consultas de voz.
+
+#### Desarrollo local (API key)
+
+En local no hay cuenta de servicio de Cloud Run, así que se usa **Gemini Developer API** con clave en `backend/.env.local`:
+
+```env
+GEMINI_API_KEY=REEMPLAZAR   # GCP Console → "Crear clave de API de Gemini"
+GEMINI_MODEL=gemini-2.5-flash
+```
+
+Copiar plantilla: `backend/.env.local.example`. La lógica está en `backend/catalogos/gemini_config.py`:
+- **Producción:** `GOOGLE_GENAI_USE_VERTEXAI=true` → `genai.Client(vertexai=True, ...)`
+- **Local:** `GEMINI_API_KEY=...` → `genai.Client(api_key=...)`
+- **Sin config:** fallback a reglas en el frontend
+
+#### Recomendaciones de la consola GCP vs Trendify
+
+| Recomendación GCP | ¿Usar en Trendify? |
+|---|---|
+| Crear clave de API de Gemini | Sí, solo para **desarrollo local** |
+| Vertex AI / Gemini en Cloud Run (ADC) | Sí, **producción actual** |
+| Crear un agente (Agent Platform) | No — CU24 ya implementado en Django |
+| Motor RAG personalizado | No — function calling sobre Postgres |
+| Model Garden | Opcional futuro (cambiar modelo) |
+| BigQuery | Opcional futuro (analítica masiva) |
+
+#### Verificar CU24 en producción
+
+1. Login staff en https://sistema-de-informacion-1.web.app (`smartinez` / `123456`).
+2. Abrir el panel del **Asistente de voz**.
+3. Preguntar: *"¿Cuánto vendimos hoy?"*
+4. En DevTools → respuesta de `/api/reportes/asistente/` debe incluir `"modo": "gemini"` (no `"reglas"`).
+
+Si falla:
+```powershell
+gcloud run services logs read trendify-backend --region=southamerica-east1 --limit=30
+```
+
+Errores comunes:
+- `403` / permisos → falta rol `roles/aiplatform.user` en la service account de Cloud Run.
+- `"modo": "reglas"` → faltan env vars Vertex o API no habilitada.
+- Modelo no disponible → confirmar `GEMINI_MODEL=gemini-2.5-flash` y región `us-central1`.
+
+#### Monitoreo de tokens y costo (CU24)
+
+Cada respuesta del asistente incluye un bloque `tokens` cuando Gemini responde:
+
+```json
+"tokens": {
+  "rondas": 2,
+  "input": 8200,
+  "output": 230,
+  "total": 8430,
+  "costo_estimado_usd": 0.003035
+}
+```
+
+También se escribe en logs de Cloud Run:
+
+```powershell
+gcloud run services logs read trendify-backend --region=southamerica-east1 --limit=20 | Select-String Gemini
+```
+
+Precio usado en la estimación: **$0.30/M input**, **$2.50/M output** (`gemini-2.5-flash`).
+
+#### Alerta de presupuesto Vertex AI (USD 5/mes)
+
+Budget creado en la cuenta de facturación del proyecto:
+
+```powershell
+gcloud billing budgets list --billing-account=01C151-03F41F-20ACE5
+```
+
+- **Nombre:** `Trendify Vertex AI - alerta USD 5`
+- **Límite:** USD 5/mes (solo servicio Vertex AI, proyecto `sistema-de-informacion-1`)
+- **Alertas:** 50 %, 90 % y 100 % del presupuesto
+- **Destinatarios:** administradores de la cuenta de facturación GCP (correo vinculado a `cisnerosderek39@gmail.com`)
+
+Para ver o editar: [GCP Console → Billing → Budgets & alerts](https://console.cloud.google.com/billing/budgets).
 
 ---
 
@@ -233,6 +361,7 @@ Imprime: `Hosting URL: https://FIREBASE_PROJECT_ID.web.app`.
    - **CU08+CU09**: vender en Caja con efectivo → vuelto correcto.
    - **CU10**: descargar PDF del recibo.
    - **CU11**: ver inventario actualizado.
+   - **CU24**: asistente de voz con Gemini (ver Fase 3.6).
 6. Si hay error CORS, revisar el secret `cors-origins` y el dominio exacto de Firebase.
 
 ---
@@ -240,9 +369,20 @@ Imprime: `Hosting URL: https://FIREBASE_PROJECT_ID.web.app`.
 ## Updates posteriores
 
 ### Backend (cambio de código)
+
+Repetir el comando completo de Fase 3.3 para conservar secrets y variables Gemini:
+
 ```powershell
+gcloud config configurations activate proyecto-si1-general
 cd c:\Users\diego\Documents\GitHub\2026\backend
-gcloud run deploy trendify-backend --source . --region=southamerica-east1
+gcloud run deploy trendify-backend `
+    --source . `
+    --region=southamerica-east1 `
+    --platform=managed `
+    --allow-unauthenticated `
+    --add-cloudsql-instances=sistema-de-informacion-1:southamerica-east1:trendify-db `
+    --set-env-vars="DEBUG=False,ALLOWED_HOSTS=*,STRIPE_CURRENCY=BOB,FRONTEND_PUBLIC_URL=https://sistema-de-informacion-1.web.app,GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_PROJECT=sistema-de-informacion-1,GOOGLE_CLOUD_LOCATION=us-central1,GEMINI_MODEL=gemini-2.5-flash" `
+    --set-secrets="SECRET_KEY=django-secret:latest,DATABASE_URL=db-url:latest,CORS_ALLOWED_ORIGINS=cors-origins:latest,CSRF_TRUSTED_ORIGINS=cors-origins:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest"
 ```
 
 ### Frontend (cambio de código o de imágenes en `public/products/`)
@@ -267,5 +407,6 @@ firebase deploy --only hosting
 | Cloud Build | 120 builds-min/día | Sobra |
 | Secret Manager | 6 secrets activos gratis | OK |
 | Firebase Hosting | 10 GB transfer/mes + 360 MB storage | OK |
+| Vertex AI (Gemini) | Pay-per-use; uso académico bajo | CU24; modelo `gemini-2.5-flash` |
 
 **Tip:** después de la defensa, `gcloud sql instances delete trendify-db` para no seguir pagando.

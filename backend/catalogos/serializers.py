@@ -126,6 +126,29 @@ class ProductoSerializer(serializers.ModelSerializer):
         ]
 
 
+class ProductoPublicoSerializer(serializers.ModelSerializer):
+    """Catalogo tienda publica: sin precio_compra; incluye stock disponible."""
+    categoria_nombre = serializers.StringRelatedField(source='id_categoria', read_only=True)
+    marca_nombre = serializers.StringRelatedField(source='id_marca', read_only=True)
+    stock_actual = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = Producto
+        fields = [
+            'id_producto',
+            'id_categoria',
+            'categoria_nombre',
+            'id_marca',
+            'marca_nombre',
+            'nombre',
+            'descripcion',
+            'precio_venta',
+            'atributos',
+            'estado',
+            'stock_actual',
+        ]
+
+
 class InventarioSerializer(serializers.ModelSerializer):
     producto_nombre = serializers.StringRelatedField(source='id_producto', read_only=True)
 
@@ -309,4 +332,4 @@ class VentaSerializer(serializers.ModelSerializer):
             'detalles',
             'detalles_venta',
         ]
-        read_only_fields = ['id_usuario', 'fecha_hora', 'monto_total', 'vuelto']
+        read_only_fields = ['id_usuario', 'fecha_hora', 'monto_total', 'vuelto', 'estado_venta']

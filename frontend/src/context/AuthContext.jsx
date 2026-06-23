@@ -41,6 +41,7 @@ export function AuthProvider({ children }) {
   const [refreshToken, setRefreshToken] = useState('');
   const [isReady, setIsReady] = useState(false);
   const [sessionExpired, setSessionExpired] = useState(false);
+  const [sessionExpiredReason, setSessionExpiredReason] = useState('expired');
 
   const clearSession = useCallback(() => {
     window.localStorage.removeItem(AUTH_STORAGE_KEY);
@@ -88,6 +89,7 @@ export function AuthProvider({ children }) {
       // Si ya hay sesion en memoria, avisamos al usuario antes de cerrarla.
       // Si no hay token (ej. el 401 vino de un endpoint publico), ignoramos.
       if (token) {
+        setSessionExpiredReason('expired');
         setSessionExpired(true);
       }
     };
@@ -96,8 +98,16 @@ export function AuthProvider({ children }) {
     return () => window.removeEventListener('auth:unauthorized', handleUnauthorized);
   }, [token]);
 
+  const expireByInactivity = useCallback(() => {
+    if (!token) return;
+    setSessionExpiredReason('inactivity');
+    setSessionExpired(true);
+    clearSession();
+  }, [token, clearSession]);
+
   const dismissSessionExpired = useCallback(() => {
     setSessionExpired(false);
+    setSessionExpiredReason('expired');
     logout({ callApi: false });
   }, [logout]);
 
@@ -106,6 +116,7 @@ export function AuthProvider({ children }) {
       try {
         const { data } = await api.post('/api/auth/login/', { username, password });
         const session = normalizeLoginPayload(data);
+        setSessionExpiredReason('expired');
         saveSession(session);
         return { ok: true };
       } catch (error) {
@@ -132,6 +143,20 @@ export function AuthProvider({ children }) {
     [saveSession]
   );
 
+  const establishSession = useCallback(
+    (data) => {
+      try {
+        const session = normalizeLoginPayload(data);
+        setSessionExpiredReason('expired');
+        saveSession(session);
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, message: 'No se pudo iniciar la sesion con la respuesta del servidor.' };
+      }
+    },
+    [saveSession]
+  );
+
   const value = useMemo(
     () => ({
       user,
@@ -139,11 +164,14 @@ export function AuthProvider({ children }) {
       isReady,
       isAuthenticated: Boolean(user && token),
       sessionExpired,
+      sessionExpiredReason,
+      expireByInactivity,
       dismissSessionExpired,
       login,
+      establishSession,
       logout,
     }),
-    [user, token, isReady, sessionExpired, dismissSessionExpired, login, logout]
+    [user, token, isReady, sessionExpired, sessionExpiredReason, expireByInactivity, dismissSessionExpired, login, establishSession, logout]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

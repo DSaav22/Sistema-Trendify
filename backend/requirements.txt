@@ -11,3 +11,4 @@ djangorestframework
 PyJWT
 django-cors-headers
 stripe
+google-genai

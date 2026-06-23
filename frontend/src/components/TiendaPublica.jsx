@@ -1,15 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../utils/api';
+import { useAuth } from '../context/AuthContext';
 import Login from './Login';
 import ProductoImagen from './ProductoImagen';
+import ProductoDetalleModal from './ProductoDetalleModal';
+import SelectDepartamento from './SelectDepartamento';
 import UserAvatar from './UserAvatar';
+import { buildReciboUrl, sanitizeTelefono } from '../utils/formHelpers';
 
 const PUBLIC_PRODUCTOS_URL = '/api/public/productos/';
 const PUBLIC_CATEGORIAS_URL = '/api/public/categorias/';
+const PUBLIC_MARCAS_URL = '/api/public/marcas/';
 const PUBLIC_CHECKOUT_URL = '/api/public/checkout/';
 const MIS_PEDIDOS_URL = '/api/mis-pedidos/';
+const MI_PERFIL_URL = '/api/mi-perfil-cliente/';
 const PEDIDOS_GUARDADOS_URL = '/api/pedidos-guardados/';
 const REGISTRO_URL = '/api/auth/registro/';
+const CARRITO_STORAGE_KEY = 'trendify.carrito.publico';
 
 function normalizeList(data) {
   if (Array.isArray(data)) return data;
@@ -31,10 +38,38 @@ function formatearFecha(isoString) {
   return date.toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' });
 }
 
+function stockDisponible(producto) {
+  return Math.max(0, Number(producto?.stock_actual ?? 0));
+}
+
+function badgeEstadoPedido(estado) {
+  const e = (estado || '').toLowerCase();
+  if (e === 'completada') return 'bg-emerald-100 text-emerald-700';
+  if (e === 'rechazada') return 'bg-red-100 text-red-700';
+  if (e === 'pendiente_validacion') return 'bg-amber-100 text-amber-800';
+  if (e === 'pendiente_verificacion') return 'bg-orange-100 text-orange-800';
+  return 'bg-slate-100 text-slate-700';
+}
+
+function labelEstadoPedido(estado) {
+  const e = (estado || '').toLowerCase();
+  if (e === 'completada') return 'Completada';
+  if (e === 'rechazada') return 'Rechazada';
+  if (e === 'pendiente_validacion') return 'Pendiente de validacion';
+  if (e === 'pendiente_verificacion') return 'Pago por verificar';
+  return estado || 'Desconocido';
+}
+
 export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthenticated }) {
+  const { establishSession } = useAuth();
+
   const [categorias, setCategorias] = useState([]);
+  const [marcas, setMarcas] = useState([]);
   const [productos, setProductos] = useState([]);
   const [filtroCategoria, setFiltroCategoria] = useState('all');
+  const [filtroMarca, setFiltroMarca] = useState('all');
+  const [precioMin, setPrecioMin] = useState('');
+  const [precioMax, setPrecioMax] = useState('');
   const [busqueda, setBusqueda] = useState('');
   const [ordenCatalogo, setOrdenCatalogo] = useState('nombre_asc');
 
@@ -62,6 +97,7 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
   });
   const [metodoPago, setMetodoPago] = useState('qr');
   const [numeroComprobante, setNumeroComprobante] = useState('');
+  const [imagenComprobanteUrl, setImagenComprobanteUrl] = useState('');
   const [submittingCheckout, setSubmittingCheckout] = useState(false);
   const [checkoutError, setCheckoutError] = useState('');
   const [checkoutSuccess, setCheckoutSuccess] = useState('');
@@ -70,13 +106,16 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
   const [mostrarLogin, setMostrarLogin] = useState(false);
   const [mostrarRegistro, setMostrarRegistro] = useState(false);
   const [mostrarMisPedidos, setMostrarMisPedidos] = useState(false);
+  const [productoDetalle, setProductoDetalle] = useState(null);
+  const [ultimaVentaId, setUltimaVentaId] = useState(null);
   
   const [misPedidos, setMisPedidos] = useState([]);
   const [cargandoPedidos, setCargandoPedidos] = useState(false);
 
   const [registroForm, setRegistroForm] = useState({
-      username: '', password: '', nombre_completo: '', telefono: '', ciudad: '', direccion: ''
+      username: '', password: '', password_confirm: '', nombre_completo: '', telefono: '', ciudad: '', direccion: ''
   });
+  const [aceptarTerminos, setAceptarTerminos] = useState(false);
   const [registroError, setRegistroError] = useState('');
   const [registroSuccess, setRegistroSuccess] = useState(false);
 
@@ -105,6 +144,7 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
     if (!stripeState) return;
 
     if (stripeState === 'success') {
+      setUltimaVentaId(ventaId || null);
       setCheckoutSuccess(
         ventaId
           ? `Pago confirmado en Stripe para pedido #${ventaId}.`
@@ -135,16 +175,7 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
   );
 
   const productosFiltrados = useMemo(() => {
-    const textoBusqueda = busqueda.trim().toLowerCase();
-    const productosPorCategoria = filtroCategoria === 'all'
-      ? productos
-      : productos.filter((p) => Number(p.id_categoria) === Number(filtroCategoria));
-
-    const productosPorBusqueda = textoBusqueda
-      ? productosPorCategoria.filter((p) => String(p.nombre || '').toLowerCase().includes(textoBusqueda))
-      : productosPorCategoria;
-
-    return [...productosPorBusqueda].sort((a, b) => {
+    return [...productos].sort((a, b) => {
       const nombreA = String(a.nombre || '');
       const nombreB = String(b.nombre || '');
       const precioA = Number(a.precio_venta || 0);
@@ -161,7 +192,22 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
       }
       return nombreA.localeCompare(nombreB, 'es', { sensitivity: 'base' });
     });
-  }, [productos, filtroCategoria, busqueda, ordenCatalogo]);
+  }, [productos, ordenCatalogo]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(CARRITO_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) setCarrito(parsed);
+    } catch (error) {
+      console.warn('No se pudo restaurar el carrito local:', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(CARRITO_STORAGE_KEY, JSON.stringify(carrito));
+  }, [carrito]);
 
   useEffect(() => {
     let active = true;
@@ -169,12 +215,21 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
       setLoadingCatalogo(true);
       setErrorCatalogo('');
       try {
-        const [resCategorias, resProductos] = await Promise.all([
+        const params = { page_size: 200 };
+        if (filtroCategoria !== 'all') params.id_categoria = filtroCategoria;
+        if (filtroMarca !== 'all') params.id_marca = filtroMarca;
+        if (busqueda.trim()) params.q = busqueda.trim();
+        if (precioMin !== '') params.precio_min = precioMin;
+        if (precioMax !== '') params.precio_max = precioMax;
+
+        const [resCategorias, resMarcas, resProductos] = await Promise.all([
           api.get(PUBLIC_CATEGORIAS_URL),
-          api.get(PUBLIC_PRODUCTOS_URL),
+          api.get(PUBLIC_MARCAS_URL),
+          api.get(PUBLIC_PRODUCTOS_URL, { params }),
         ]);
         if (!active) return;
         setCategorias(normalizeList(resCategorias.data));
+        setMarcas(normalizeList(resMarcas.data));
         setProductos(normalizeList(resProductos.data));
       } catch (error) {
         if (active) setErrorCatalogo('No se pudo cargar la tienda. Verifica backend.');
@@ -182,10 +237,35 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
         if (active) setLoadingCatalogo(false);
       }
     }
-    loadCatalogo();
-    return () => { active = false; };
-  }, []);
+    const timer = setTimeout(loadCatalogo, busqueda.trim() ? 350 : 0);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [filtroCategoria, filtroMarca, busqueda, precioMin, precioMax]);
   
+  useEffect(() => {
+    if (!isClienteAutenticado) return;
+
+    let active = true;
+    async function cargarPerfil() {
+      try {
+        const { data } = await api.get(MI_PERFIL_URL);
+        if (!active || !data) return;
+        setCliente({
+          nombre: data.nombre_completo || '',
+          telefono: data.telefono || '',
+          ciudad: data.ciudad || '',
+          direccion: data.direccion || '',
+        });
+      } catch (error) {
+        console.error('Error cargando perfil cliente', error);
+      }
+    }
+    cargarPerfil();
+    return () => { active = false; };
+  }, [isClienteAutenticado]);
+
   useEffect(() => {
      if (isClienteAutenticado && mostrarMisPedidos) {
          cargarMisPedidos();
@@ -304,13 +384,24 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
     setCheckoutError('');
     setCheckoutSuccess('');
     const id = Number(producto.id_producto ?? producto.id);
+    const stock = stockDisponible(producto);
+    if (stock <= 0) {
+      mostrarToast('Producto sin stock disponible');
+      return;
+    }
+
     setCarrito((prev) => {
       const exists = prev.find((item) => item.id_producto === id);
+      const cantidadActual = exists ? exists.cantidad : 0;
+      if (cantidadActual + 1 > stock) {
+        mostrarToast(`Solo hay ${stock} unidad(es) disponibles`);
+        return prev;
+      }
       if (!exists) {
         return [...prev, { ...producto, id_producto: id, cantidad: 1 }];
       }
       return prev.map((item) =>
-        item.id_producto === id ? { ...item, cantidad: item.cantidad + 1 } : item
+        item.id_producto === id ? { ...item, cantidad: item.cantidad + 1, stock_actual: stock } : item
       );
     });
     mostrarToast(`✓ ${producto.nombre} anadido al carrito`);
@@ -320,16 +411,41 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
     setCarrito((prev) => prev.filter((item) => item.id_producto !== idProducto));
   };
 
+  const vaciarCarrito = () => {
+    setCarrito([]);
+    mostrarToast('Carrito vaciado');
+  };
+
   const updateQty = (idProducto, qty) => {
     if (qty <= 0) {
       removeFromCart(idProducto);
       return;
     }
     setCarrito((prev) =>
-      prev.map((item) =>
-        item.id_producto === idProducto ? { ...item, cantidad: qty } : item
-      )
+      prev.map((item) => {
+        if (item.id_producto !== idProducto) return item;
+        const stock = stockDisponible(item);
+        const cantidadFinal = Math.min(qty, stock > 0 ? stock : qty);
+        if (stock > 0 && qty > stock) {
+          mostrarToast(`Maximo disponible: ${stock}`);
+        }
+        return { ...item, cantidad: cantidadFinal };
+      })
     );
+  };
+
+  const solicitarLoginParaCheckout = () => {
+    setCheckoutError('Debes iniciar sesion como cliente para confirmar tu pedido.');
+    setMostrarLogin(true);
+  };
+
+  const irAPago = () => {
+    if (!isClienteAutenticado) {
+      solicitarLoginParaCheckout();
+      return;
+    }
+    setCheckoutStep('checkout');
+    setCheckoutError('');
   };
 
   const openCartDrawer = () => {
@@ -340,7 +456,14 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
 
   const handleClienteChange = (event) => {
     const { name, value } = event.target;
-    setCliente((prev) => ({ ...prev, [name]: value }));
+    const nextValue = name === 'telefono' ? sanitizeTelefono(value) : value;
+    setCliente((prev) => ({ ...prev, [name]: nextValue }));
+  };
+
+  const handleRegistroChange = (event) => {
+    const { name, value } = event.target;
+    const nextValue = name === 'telefono' ? sanitizeTelefono(value) : value;
+    setRegistroForm((prev) => ({ ...prev, [name]: nextValue }));
   };
 
   const requiereComprobante = metodoPago === 'qr' || metodoPago === 'transferencia';
@@ -350,10 +473,13 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
     setCheckoutSuccess('');
 
     if (!isClienteAutenticado) {
-        if (!cliente.nombre.trim() || !cliente.telefono.trim() || !cliente.ciudad.trim() || !cliente.direccion.trim()) {
-          setCheckoutError('Completa todos los datos de envio.');
-          return;
-        }
+      solicitarLoginParaCheckout();
+      return;
+    }
+
+    if (!cliente.nombre.trim() || !cliente.telefono.trim() || !cliente.ciudad.trim() || !cliente.direccion.trim()) {
+      setCheckoutError('Completa todos los datos de envio.');
+      return;
     }
 
     if (carrito.length === 0) {
@@ -372,7 +498,7 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
         ? window.crypto.randomUUID()
         : `chk-${Date.now()}-${Math.random().toString(16).slice(2)}`;
       const payload = {
-        cliente: isClienteAutenticado ? {} : {
+        cliente: {
           nombre: cliente.nombre.trim(),
           telefono: cliente.telefono.trim(),
           ciudad: cliente.ciudad.trim(),
@@ -380,6 +506,7 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
         },
         metodo_pago: metodoPago,
         numero_comprobante: requiereComprobante ? numeroComprobante.trim() : '',
+        imagen_qr_url: imagenComprobanteUrl.trim(),
         carrito: carrito.map((item) => ({
           id_producto: item.id_producto,
           cantidad: item.cantidad,
@@ -398,9 +525,11 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
       setCheckoutSuccess(
         `Pedido #${data.id_venta} registrado. Esta pendiente de validacion por el equipo.`
       );
+      setUltimaVentaId(data.id_venta || null);
       setCarrito([]);
-      setCliente({ nombre: '', telefono: '', ciudad: '', direccion: '' });
+      window.localStorage.removeItem(CARRITO_STORAGE_KEY);
       setNumeroComprobante('');
+      setImagenComprobanteUrl('');
       setMetodoPago('qr');
       setCheckoutStep('carrito');
       setOpenCheckout(false);
@@ -415,15 +544,47 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
       e.preventDefault();
       setRegistroError('');
       setRegistroSuccess(false);
+
+      if (registroForm.password !== registroForm.password_confirm) {
+        setRegistroError('Las contrasenas no coinciden.');
+        return;
+      }
+      if (!aceptarTerminos) {
+        setRegistroError('Debes aceptar los terminos y condiciones.');
+        return;
+      }
+      if (!registroForm.telefono.trim() || !registroForm.ciudad.trim() || !registroForm.direccion.trim()) {
+        setRegistroError('Telefono, ciudad y direccion son obligatorios.');
+        return;
+      }
+
       try {
-          await api.post(REGISTRO_URL, registroForm);
+          const { data } = await api.post(REGISTRO_URL, registroForm);
+          const sessionResult = establishSession(data);
+          if (!sessionResult.ok) {
+            setRegistroError(sessionResult.message || 'Registro ok, pero no se pudo iniciar sesion.');
+            return;
+          }
           setRegistroSuccess(true);
-          setTimeout(() => {
-              setMostrarRegistro(false);
-              setMostrarLogin(true);
-          }, 2000);
+          setCliente({
+            nombre: registroForm.nombre_completo,
+            telefono: registroForm.telefono,
+            ciudad: registroForm.ciudad,
+            direccion: registroForm.direccion,
+          });
+          setMostrarRegistro(false);
+          mostrarToast('Cuenta creada. Bienvenido a Trendify!');
       } catch(err) {
-          setRegistroError(err?.response?.data?.detail || 'Ocurrio un error en el registro.');
+          const detail = err?.response?.data?.detail;
+          const fieldErrors = err?.response?.data;
+          if (typeof detail === 'string') {
+            setRegistroError(detail);
+          } else if (fieldErrors && typeof fieldErrors === 'object') {
+            const first = Object.values(fieldErrors).flat()[0];
+            setRegistroError(first || 'Ocurrio un error en el registro.');
+          } else {
+            setRegistroError('Ocurrio un error en el registro.');
+          }
       }
   };
 
@@ -450,7 +611,7 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
                   <UserAvatar username={user?.username} size="sm" />
                   Hola, {user?.username}
                 </span>
-                <button type="button" onClick={() => { setMostrarMisPedidos(true); setMenuAbierto(false); }} className="rounded-full border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-slate-400 w-full sm:w-auto mt-2 sm:mt-0">Mis Pedidos</button>
+                <button type="button" onClick={() => { setMostrarMisPedidos(true); setMenuAbierto(false); }} className="rounded-full border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-slate-400 w-full sm:w-auto mt-2 sm:mt-0">Mis Pedidos / Recibos</button>
                 <button type="button" onClick={() => { logout(); setMenuAbierto(false); }} className="rounded-full border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-50 w-full sm:w-auto mt-2 sm:mt-0">Salir</button>
                 </>
             ) : isAuthenticated ? (
@@ -478,7 +639,7 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
         <article className="rounded-3xl bg-slate-900 p-6 text-white shadow-2xl sm:p-10">
           <p className="text-xs uppercase tracking-[0.25em] text-lime-300">Nueva Coleccion</p>
           <h2 className="mt-3 max-w-xl text-3xl font-black leading-[1.05] sm:text-4xl lg:text-5xl">Maquillaje premium.</h2>
-          <p className="mt-4 max-w-lg text-sm text-slate-200 sm:text-base">Compra rapido y paga desde tu celular. Hazte una cuenta para acceder a tu historial.</p>
+          <p className="mt-4 max-w-lg text-sm text-slate-200 sm:text-base">Registrate para comprar, guardar tu carrito y ver tu historial de pedidos.</p>
           <button type="button" onClick={() => window.scrollTo({ top: 500, behavior: 'smooth' })} className="mt-7 rounded-xl bg-lime-300 px-5 py-3 text-sm font-extrabold text-slate-900 transition hover:bg-lime-200 w-full sm:w-auto">
             Ver Catalogo
           </button>
@@ -486,7 +647,7 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
 
         <article className="rounded-3xl border border-amber-200 bg-gradient-to-br from-amber-100 via-rose-50 to-violet-100 p-6 shadow-sm sm:p-8">
           <h3 className="mt-2 text-2xl font-black text-slate-900">Online y Seguro</h3>
-          <p className="mt-3 text-sm text-slate-700">Puedes comprar como invitado anonimo o en tu cuenta personal.</p>
+          <p className="mt-3 text-sm text-slate-700">Crea tu cuenta de cliente para confirmar pedidos con pago QR o transferencia.</p>
           <div className="mt-5 grid grid-cols-2 lg:grid-cols-2 gap-3 text-center">
             <div className="rounded-xl bg-white/75 px-3 py-3 shadow-sm"><p className="text-lg font-black text-slate-900">24h</p><p className="text-xs text-slate-600">Despacho</p></div>
             <div className="rounded-xl bg-white/75 px-3 py-3 shadow-sm"><p className="text-lg font-black text-slate-900">QR</p><p className="text-xs text-slate-600">Pago movil</p></div>
@@ -495,18 +656,80 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
       </section>
 
       <main className="mx-auto w-full max-w-[1300px] px-4 pb-16 sm:px-6">
-        {checkoutSuccess && <p className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{checkoutSuccess}</p>}
+        {isClienteAutenticado && (
+          <div className="mb-5 flex flex-col gap-3 rounded-2xl border border-sky-200 bg-sky-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-bold text-sky-900">Tus compras y facturas</p>
+              <p className="mt-1 text-sm text-sky-800">
+                Aqui puedes ver tu historial y descargar el recibo cuando tu pedido este confirmado.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setMostrarMisPedidos(true)}
+              className="shrink-0 rounded-xl bg-sky-700 px-4 py-2.5 text-sm font-bold text-white hover:bg-sky-800"
+            >
+              Ver Mis Pedidos / Recibos
+            </button>
+          </div>
+        )}
 
-        <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex gap-2 overflow-x-auto pb-2 lg:flex-1">
-            <button onClick={() => setFiltroCategoria('all')} className={['whitespace-nowrap rounded-full px-4 py-2 text-xs font-bold uppercase tracking-wider transition', filtroCategoria === 'all' ? 'bg-slate-900 text-white' : 'border border-slate-300 bg-white text-slate-700 hover:border-slate-400'].join(' ')}>Todas</button>
-            {categorias.map((cat) => (
+        {checkoutSuccess && (
+          <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
+            <p>{checkoutSuccess}</p>
+            <div className="mt-3 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => setMostrarMisPedidos(true)}
+                className="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-bold text-emerald-800 hover:bg-emerald-100"
+              >
+                Ir a Mis Pedidos / Recibos
+              </button>
+              {ultimaVentaId && (
+                <>
+                  <a
+                    href={buildReciboUrl(ultimaVentaId, 'html')}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800"
+                  >
+                    Ver recibo (HTML)
+                  </a>
+                  <a
+                    href={buildReciboUrl(ultimaVentaId, 'pdf')}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-sky-700"
+                  >
+                    Descargar PDF
+                  </a>
+                </>
+              )}
+            </div>
+            {ultimaVentaId && (
+              <p className="mt-2 text-xs text-emerald-800">
+                Si el pedido aun esta pendiente de validacion, el recibo se habilitara cuando el equipo lo confirme.
+                Siempre quedara guardado en <strong>Mis Pedidos / Recibos</strong>.
+              </p>
+            )}
+          </div>
+        )}
+
+        <div className="mb-6 space-y-4">
+          <div>
+            <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">Categorias</p>
+            <div className="flex flex-wrap gap-2">
+              <button onClick={() => setFiltroCategoria('all')} className={['whitespace-nowrap rounded-full px-4 py-2 text-xs font-bold uppercase tracking-wider transition', filtroCategoria === 'all' ? 'bg-slate-900 text-white' : 'border border-slate-300 bg-white text-slate-700 hover:border-slate-400'].join(' ')}>Todas</button>
+              {categorias.map((cat) => (
                 <button key={cat.id_categoria} onClick={() => setFiltroCategoria(String(cat.id_categoria))} className={['whitespace-nowrap rounded-full px-4 py-2 text-xs font-bold uppercase tracking-wider transition', String(filtroCategoria) === String(cat.id_categoria) ? 'bg-slate-900 text-white' : 'border border-slate-300 bg-white text-slate-700 hover:border-slate-400'].join(' ')}>{cat.nombre}</button>
-            ))}
+              ))}
+            </div>
           </div>
 
-          <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-[minmax(220px,320px)_minmax(180px,220px)] lg:w-auto">
-            <label className="relative block">
+          <div>
+            <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">Filtros</p>
+            <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(200px,1fr)_minmax(160px,1fr)_minmax(100px,1fr)_minmax(100px,1fr)_minmax(180px,1fr)]">
+            <label className="relative block sm:col-span-2 lg:col-span-1">
               <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
                 <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-4.35-4.35" />
@@ -517,10 +740,39 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
                 type="search"
                 value={busqueda}
                 onChange={(event) => setBusqueda(event.target.value)}
-                placeholder="Buscar por nombre"
+                placeholder="Buscar por nombre, marca o categoria"
                 className="h-10 w-full rounded-full border border-slate-300 bg-white pl-9 pr-4 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-fuchsia-400 focus:ring-2 focus:ring-fuchsia-100"
               />
             </label>
+
+            <select
+              value={filtroMarca}
+              onChange={(event) => setFiltroMarca(event.target.value)}
+              className="h-10 w-full rounded-full border border-slate-300 bg-white px-4 text-sm font-bold text-slate-700 outline-none transition focus:border-fuchsia-400 focus:ring-2 focus:ring-fuchsia-100"
+            >
+              <option value="all">Todas las marcas</option>
+              {marcas.map((marca) => (
+                <option key={marca.id_marca} value={String(marca.id_marca)}>{marca.nombre}</option>
+              ))}
+            </select>
+
+            <input
+              type="number"
+              min="0"
+              value={precioMin}
+              onChange={(event) => setPrecioMin(event.target.value)}
+              placeholder="Precio min"
+              className="h-10 w-full rounded-full border border-slate-300 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-fuchsia-400 focus:ring-2 focus:ring-fuchsia-100"
+            />
+
+            <input
+              type="number"
+              min="0"
+              value={precioMax}
+              onChange={(event) => setPrecioMax(event.target.value)}
+              placeholder="Precio max"
+              className="h-10 w-full rounded-full border border-slate-300 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-fuchsia-400 focus:ring-2 focus:ring-fuchsia-100"
+            />
 
             <select
               value={ordenCatalogo}
@@ -532,6 +784,7 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
               <option value="precio_asc">Precio menor</option>
               <option value="precio_desc">Precio mayor</option>
             </select>
+            </div>
           </div>
         </div>
 
@@ -549,18 +802,40 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
           <div className="grid gap-5 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
             {productosFiltrados.map((producto) => (
                 <article key={producto.id_producto} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-1 hover:shadow-lg flex flex-row sm:flex-col items-center sm:items-stretch">
-                  <ProductoImagen
-                    idProducto={producto.id_producto}
-                    nombre={producto.nombre}
-                    imagenSrc={producto.atributos?.imagen_data_uri}
-                    className="w-1/3 sm:w-full h-28 sm:h-40 shrink-0"
-                  />
+                  <button
+                    type="button"
+                    onClick={() => setProductoDetalle(producto)}
+                    className="w-1/3 sm:w-full shrink-0 text-left"
+                  >
+                    <ProductoImagen
+                      idProducto={producto.id_producto}
+                      nombre={producto.nombre}
+                      imagenSrc={producto.atributos?.imagen_data_uri}
+                      className="w-full h-28 sm:h-40"
+                    />
+                  </button>
                   <div className="w-2/3 sm:w-full p-4 flex flex-col justify-between h-full">
                     <div>
-                      <h4 className="line-clamp-2 text-sm sm:text-base font-bold text-slate-900">{producto.nombre}</h4>
+                      <button
+                        type="button"
+                        onClick={() => setProductoDetalle(producto)}
+                        className="text-left"
+                      >
+                        <h4 className="line-clamp-2 text-sm sm:text-base font-bold text-slate-900 hover:text-fuchsia-700">{producto.nombre}</h4>
+                      </button>
                       <p className="mt-1 text-base sm:text-lg font-black text-slate-900">{currency(producto.precio_venta)}</p>
+                      <p className="mt-1 text-xs font-semibold text-slate-500">Stock: {stockDisponible(producto)}</p>
                     </div>
-                    <button onClick={() => addToCart(producto)} className="mt-3 w-full rounded-xl bg-slate-900 px-3 py-2 text-xs sm:text-sm font-bold text-white transition hover:bg-slate-800">Comprar</button>
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setProductoDetalle(producto)}
+                        className="flex-1 rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                      >
+                        Ver detalle
+                      </button>
+                      <button onClick={() => addToCart(producto)} className="flex-1 rounded-xl bg-slate-900 px-3 py-2 text-xs sm:text-sm font-bold text-white transition hover:bg-slate-800">Comprar</button>
+                    </div>
                   </div>
                 </article>
             ))}
@@ -573,17 +848,29 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
       {mostrarMisPedidos && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 p-4">
               <div className="w-full max-w-3xl bg-white rounded-3xl p-6 shadow-2xl max-h-[85vh] overflow-y-auto">
-                  <div className="flex justify-between">
-                      <h3 className="text-2xl font-black">Historial de Compras</h3>
-                      <button onClick={() => setMostrarMisPedidos(false)} className="text-slate-500 font-bold">X</button>
+                  <div className="flex justify-between items-start gap-3">
+                      <div>
+                        <h3 className="text-2xl font-black">Mis Pedidos y Recibos</h3>
+                        <p className="mt-1 text-sm text-slate-500">
+                          Historial de compras. La factura PDF/HTML aparece cuando el pedido esta confirmado.
+                        </p>
+                      </div>
+                      <button onClick={() => setMostrarMisPedidos(false)} className="rounded-full border border-slate-300 px-3 py-1 text-sm font-semibold text-slate-600 hover:bg-slate-50">X</button>
                   </div>
                   {cargandoPedidos ? <p className="mt-5">Cargando tus compras...</p> : (
                       <div className="mt-5 space-y-4">
-                          {misPedidos.length === 0 ? <p className="text-slate-500">Aun no tienes compras confirmadas.</p> : misPedidos.map(pedido => (
+                          {misPedidos.length === 0 ? <p className="text-slate-500">Aun no tienes pedidos registrados.</p> : misPedidos.map(pedido => {
+                            const completada = (pedido.estado_venta || '').toLowerCase() === 'completada';
+                            return (
                               <div key={pedido.id_venta} className="border border-slate-200 rounded-xl p-4 bg-slate-50">
-                                  <div className="flex justify-between font-bold border-b pb-2">
-                                      <span>Venta #{pedido.id_venta}</span>
-                                      <span className="text-indigo-600">{currency(pedido.monto_total)}</span>
+                                  <div className="flex flex-wrap justify-between gap-2 font-bold border-b pb-2">
+                                      <span>Pedido #{pedido.id_venta}</span>
+                                      <div className="flex items-center gap-2">
+                                        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${badgeEstadoPedido(pedido.estado_venta)}`}>
+                                          {labelEstadoPedido(pedido.estado_venta)}
+                                        </span>
+                                        <span className="text-indigo-600">{currency(pedido.monto_total)}</span>
+                                      </div>
                                   </div>
                                   <p className="text-xs mt-2 text-slate-600">Fecha: {formatearFecha(pedido.fecha_hora)} | Pago: {pedido.metodo_pago}</p>
                                   <ul className="mt-2 space-y-1">
@@ -594,8 +881,22 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
                                           </li>
                                       ))}
                                   </ul>
+                                  <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Factura / Recibo</p>
+                                    {completada ? (
+                                      <div className="mt-2 flex flex-wrap gap-2">
+                                        <a href={buildReciboUrl(pedido.id_venta, 'html')} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800">Ver recibo HTML</a>
+                                        <a href={buildReciboUrl(pedido.id_venta, 'pdf')} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-bold text-white hover:bg-sky-700">Descargar PDF</a>
+                                      </div>
+                                    ) : (
+                                      <p className="mt-2 text-sm text-amber-800">
+                                        Tu recibo estara disponible aqui cuando confirmemos el pago del pedido.
+                                      </p>
+                                    )}
+                                  </div>
                               </div>
-                          ))}
+                            );
+                          })}
                       </div>
                   )}
               </div>
@@ -610,17 +911,22 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
                       <h3 className="text-2xl font-black">Crea tu Cuenta</h3>
                       <button onClick={() => setMostrarRegistro(false)} className="text-slate-500 font-bold border rounded px-2 hover:bg-slate-100">X Cerrar</button>
                   </div>
-                  {registroSuccess ? <div className="p-4 bg-emerald-50 text-emerald-700 rounded-xl mb-4 font-bold">Registro exitoso! Iniciando sesion...</div> : (
+                  {registroSuccess ? <div className="p-4 bg-emerald-50 text-emerald-700 rounded-xl mb-4 font-bold">Cuenta creada correctamente.</div> : (
                       <form onSubmit={handleRegistroSubmit} className="space-y-4">
                           {registroError && <p className="text-red-600 text-sm bg-red-50 p-3 rounded-xl">{registroError}</p>}
-                          <div><label className="text-xs font-bold uppercase">Correo (Username) *</label><input required value={registroForm.username} onChange={e=>setRegistroForm({...registroForm, username: e.target.value})} className="w-full border p-2 rounded-xl mt-1" type="text" placeholder="juan@correo.com" /></div>
+                          <div><label className="text-xs font-bold uppercase">Correo *</label><input required type="email" value={registroForm.username} onChange={e=>setRegistroForm({...registroForm, username: e.target.value})} className="w-full border p-2 rounded-xl mt-1" placeholder="juan@correo.com" /></div>
                           <div><label className="text-xs font-bold uppercase">Contrasena *</label><input required minLength={6} value={registroForm.password} onChange={e=>setRegistroForm({...registroForm, password: e.target.value})} className="w-full border p-2 rounded-xl mt-1" type="password" placeholder="Minimo 6 caracteres" /></div>
+                          <div><label className="text-xs font-bold uppercase">Confirmar contrasena *</label><input required minLength={6} value={registroForm.password_confirm} onChange={e=>setRegistroForm({...registroForm, password_confirm: e.target.value})} className="w-full border p-2 rounded-xl mt-1" type="password" placeholder="Repite tu contrasena" /></div>
                           <div><label className="text-xs font-bold uppercase">Nombre Completo *</label><input required value={registroForm.nombre_completo} onChange={e=>setRegistroForm({...registroForm, nombre_completo: e.target.value})} className="w-full border p-2 rounded-xl mt-1" type="text" placeholder="Juan Perez" /></div>
                           <div className="grid grid-cols-2 gap-3">
-                              <div><label className="text-xs font-bold uppercase">Telefono</label><input value={registroForm.telefono} onChange={e=>setRegistroForm({...registroForm, telefono: e.target.value})} className="w-full border p-2 rounded-xl mt-1" type="tel" /></div>
-                              <div><label className="text-xs font-bold uppercase">Ciudad</label><input value={registroForm.ciudad} onChange={e=>setRegistroForm({...registroForm, ciudad: e.target.value})} className="w-full border p-2 rounded-xl mt-1" type="text" /></div>
+                              <div><label className="text-xs font-bold uppercase">Telefono *</label><input required inputMode="numeric" value={registroForm.telefono} onChange={handleRegistroChange} name="telefono" className="w-full border p-2 rounded-xl mt-1" type="tel" /></div>
+                              <div><label className="text-xs font-bold uppercase">Departamento *</label><SelectDepartamento required name="ciudad" value={registroForm.ciudad} onChange={handleRegistroChange} className="w-full border p-2 rounded-xl mt-1" placeholder="Selecciona departamento" /></div>
                           </div>
-                          <div><label className="text-xs font-bold uppercase">Direccion de Envio</label><input value={registroForm.direccion} onChange={e=>setRegistroForm({...registroForm, direccion: e.target.value})} className="w-full border p-2 rounded-xl mt-1" type="text" /></div>
+                          <div><label className="text-xs font-bold uppercase">Direccion de Envio *</label><input required value={registroForm.direccion} onChange={e=>setRegistroForm({...registroForm, direccion: e.target.value})} className="w-full border p-2 rounded-xl mt-1" type="text" /></div>
+                          <label className="flex items-start gap-2 text-sm text-slate-600">
+                            <input type="checkbox" checked={aceptarTerminos} onChange={(e) => setAceptarTerminos(e.target.checked)} className="mt-1" />
+                            <span>Acepto los terminos y condiciones del negocio Trendify.</span>
+                          </label>
                           <button type="submit" className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl hover:bg-slate-800">Registrarme</button>
                       </form>
                   )}
@@ -728,11 +1034,15 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
 
                 {carrito.length === 0 ? <p className="text-slate-600 text-center py-8">Vacio.</p> : (
                   <div className="space-y-4">
+                    <div className="flex justify-end">
+                      <button type="button" onClick={vaciarCarrito} className="text-xs font-bold text-red-500 hover:text-red-600">Vaciar carrito</button>
+                    </div>
                     {carrito.map((item) => (
                       <div key={item.id_producto} className="flex border-b border-slate-100 pb-4">
                          <div className="flex-1">
                            <p className="font-bold text-slate-800">{item.nombre}</p>
                            <p className="text-sm text-slate-500">{currency(item.precio_venta)}</p>
+                           <p className="text-xs text-slate-400">Disponible: {stockDisponible(item)}</p>
                            <div className="mt-2 flex items-center gap-2">
                             <button onClick={() => updateQty(item.id_producto, item.cantidad-1)} className="h-8 w-8 bg-slate-100 rounded-md font-bold">-</button>
                             <span className="w-8 text-center font-bold">{item.cantidad}</span>
@@ -750,7 +1060,7 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
                 <div className="mt-6 rounded-2xl bg-slate-900 px-5 py-5 text-white shadow-lg">
                   <p className="text-xs uppercase tracking-widest text-slate-400">Total a Pagar</p>
                   <p className="mt-1 text-3xl sm:text-4xl font-black">{currency(total)}</p>
-                  <button onClick={() => setCheckoutStep('checkout')} disabled={carrito.length === 0} className="mt-5 w-full rounded-xl bg-lime-400 px-4 py-3 text-sm font-black text-slate-900 transition hover:bg-lime-300 disabled:opacity-50 disabled:cursor-not-allowed">Proceder al Pago</button>
+                  <button onClick={irAPago} disabled={carrito.length === 0} className="mt-5 w-full rounded-xl bg-lime-400 px-4 py-3 text-sm font-black text-slate-900 transition hover:bg-lime-300 disabled:opacity-50 disabled:cursor-not-allowed">Proceder al Pago</button>
                 </div>
               </div>
             )}
@@ -758,19 +1068,23 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
             {checkoutStep === 'checkout' && (
               <div className="animate-in fade-in duration-300">
                 <button onClick={() => setCheckoutStep('carrito')} className="mb-4 text-sm font-bold text-slate-500">Volver</button>
-                
-                {isClienteAutenticado ? (
-                    <div className="p-4 bg-fuchsia-50 text-fuchsia-900 rounded-xl mb-4 text-sm border border-fuchsia-100">
-                        <strong>Hola {user?.username}</strong>, realizaremos la compra utilizando tu informacion de perfil guardada.
+
+                {!isClienteAutenticado ? (
+                  <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                    <p className="font-semibold">Necesitas una cuenta de cliente para confirmar el pedido.</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button type="button" onClick={() => setMostrarLogin(true)} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white">Iniciar sesion</button>
+                      <button type="button" onClick={() => setMostrarRegistro(true)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700">Crear cuenta</button>
                     </div>
+                  </div>
                 ) : (
-                    <div className="space-y-3 mb-5">
-                      <p className="text-sm font-semibold mb-2">Completar Datos (Invitado)</p>
-                      <input name="nombre" value={cliente.nombre} onChange={handleClienteChange} placeholder="Nombre completo" className="w-full border p-3 rounded-xl text-sm" />
-                      <input name="telefono" value={cliente.telefono} onChange={handleClienteChange} placeholder="Telefono" className="w-full border p-3 rounded-xl text-sm" />
-                      <input name="ciudad" value={cliente.ciudad} onChange={handleClienteChange} placeholder="Ciudad" className="w-full border p-3 rounded-xl text-sm" />
-                      <textarea name="direccion" value={cliente.direccion} onChange={handleClienteChange} rows={2} placeholder="Direccion exacta" className="w-full border p-3 rounded-xl text-sm" />
-                    </div>
+                  <div className="space-y-3 mb-5">
+                    <p className="text-sm font-semibold">Datos de envio</p>
+                    <input name="nombre" value={cliente.nombre} onChange={handleClienteChange} placeholder="Nombre completo *" className="w-full border p-3 rounded-xl text-sm" />
+                    <input name="telefono" inputMode="numeric" value={cliente.telefono} onChange={handleClienteChange} placeholder="Telefono (solo numeros) *" className="w-full border p-3 rounded-xl text-sm" />
+                    <SelectDepartamento name="ciudad" value={cliente.ciudad} onChange={handleClienteChange} className="w-full border p-3 rounded-xl text-sm bg-white" placeholder="Selecciona departamento *" required />
+                    <textarea name="direccion" value={cliente.direccion} onChange={handleClienteChange} rows={2} placeholder="Direccion exacta *" className="w-full border p-3 rounded-xl text-sm" />
+                  </div>
                 )}
 
                 <div className="mt-4 space-y-3">
@@ -832,6 +1146,15 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
                       placeholder={metodoPago === 'qr' ? 'Ej. 123456789' : 'N. de operacion bancaria'}
                       className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-3 text-sm"
                     />
+                    <label className="mt-3 block text-xs font-bold uppercase tracking-widest text-slate-500">
+                      URL de imagen del comprobante (opcional)
+                    </label>
+                    <input
+                      value={imagenComprobanteUrl}
+                      onChange={(e) => setImagenComprobanteUrl(e.target.value)}
+                      placeholder="https://..."
+                      className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-3 text-sm"
+                    />
                     <p className="mt-1 text-xs text-slate-500">
                       Tu pedido quedara pendiente hasta que el equipo verifique el pago.
                     </p>
@@ -863,6 +1186,14 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
           {toast.message}
         </div>
       )}
+
+      <ProductoDetalleModal
+        producto={productoDetalle}
+        open={Boolean(productoDetalle)}
+        onClose={() => setProductoDetalle(null)}
+        onAddToCart={addToCart}
+        stockActual={productoDetalle ? stockDisponible(productoDetalle) : 0}
+      />
     </div>
   );
 }

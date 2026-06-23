@@ -1,12 +1,44 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from './src/utils/api';
+import { useAuth } from './src/context/AuthContext';
+import { filtrarPorTexto } from './src/utils/formHelpers';
 
 const API_BASE = '/api';
 const INVENTARIO_URL = `${API_BASE}/inventario/`;
 const MOVIMIENTOS_URL = `${API_BASE}/movimientos/`;
 const PRODUCTOS_URL = `${API_BASE}/productos/`;
 
+const ROLE_ADMIN = 1;
+const ROLE_BODEGUERO = 3;
+
+function extractRoleId(user) {
+  if (!user) return null;
+  const candidates = [
+    user?.id_rol?.id_rol,
+    user?.id_rol,
+    user?.rol?.id_rol,
+    user?.rol,
+    user?.role_id,
+  ];
+  for (const value of candidates) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return null;
+}
+
+function formatFechaInventario(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString('es-BO', { dateStyle: 'short', timeStyle: 'short' });
+}
+
 export default function InventarioDashboard() {
+  const { user } = useAuth();
+  const roleId = useMemo(() => extractRoleId(user), [user]);
+  const canWriteInventory = roleId === ROLE_ADMIN || roleId === ROLE_BODEGUERO;
+  const idUsuario = user?.id_usuario ?? user?.id ?? 1;
   const [inventario, setInventario] = useState([]);
   const [movimientos, setMovimientos] = useState([]);
   const [productos, setProductos] = useState([]);
@@ -19,14 +51,20 @@ export default function InventarioDashboard() {
   // Edicion inline de stock_minimo: {id_inventario: nuevoValor}
   const [stockMinEditado, setStockMinEditado] = useState({});
   const [guardandoStockMin, setGuardandoStockMin] = useState(null);
+  const [busquedaInventario, setBusquedaInventario] = useState('');
+  const [busquedaProducto, setBusquedaProducto] = useState('');
 
   const [formData, setFormData] = useState({
     id_producto: '',
     tipo_movimiento: 'entrada',
     cantidad: '',
     motivo: '',
-    id_usuario: 1,
+    id_usuario: idUsuario,
   });
+
+  useEffect(() => {
+    setFormData((prev) => ({ ...prev, id_usuario: idUsuario }));
+  }, [idUsuario]);
 
   const canSubmit = useMemo(() => {
     return (
@@ -36,6 +74,16 @@ export default function InventarioDashboard() {
       Number(formData.id_usuario) > 0
     );
   }, [formData]);
+
+  const inventarioFiltrado = useMemo(
+    () => filtrarPorTexto(inventario, busquedaInventario, ['producto_nombre']),
+    [inventario, busquedaInventario]
+  );
+
+  const productosFiltrados = useMemo(
+    () => filtrarPorTexto(productos, busquedaProducto, ['nombre']),
+    [productos, busquedaProducto]
+  );
 
   const cargarDashboard = async () => {
     setLoading(true);
@@ -113,7 +161,7 @@ export default function InventarioDashboard() {
       tipo_movimiento: 'entrada',
       cantidad: '',
       motivo: '',
-      id_usuario: 1,
+      id_usuario: idUsuario,
     }));
   };
 
@@ -164,14 +212,22 @@ export default function InventarioDashboard() {
         <article className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
           <h3 className="mb-4 text-base sm:text-lg font-semibold text-slate-800">Estado Actual del Inventario</h3>
 
+          <input
+            type="search"
+            value={busquedaInventario}
+            onChange={(e) => setBusquedaInventario(e.target.value)}
+            placeholder="Buscar producto en inventario..."
+            className="mb-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-sky-500"
+          />
+
           <div className="overflow-x-auto rounded-xl border border-slate-200 max-w-full">
-            <table className="min-w-full text-left text-sm whitespace-nowrap">
+            <table className="min-w-full text-left text-sm">
               <thead className="bg-slate-50 text-slate-700">
                 <tr>
                   <th className="px-4 py-3 font-semibold">Producto</th>
-                  <th className="px-4 py-3 font-semibold">Stock Actual</th>
-                  <th className="px-4 py-3 font-semibold">Stock Minimo</th>
-                  <th className="px-4 py-3 font-semibold">Ultima Actualizacion</th>
+                  <th className="px-4 py-3 font-semibold whitespace-nowrap">Stock Actual</th>
+                  <th className="px-4 py-3 font-semibold whitespace-nowrap">Stock Minimo</th>
+                  <th className="min-w-[11rem] px-4 py-3 font-semibold">Ultima Actualizacion</th>
                 </tr>
               </thead>
               <tbody>
@@ -181,14 +237,14 @@ export default function InventarioDashboard() {
                       Cargando inventario...
                     </td>
                   </tr>
-                ) : inventario.length === 0 ? (
+                ) : inventarioFiltrado.length === 0 ? (
                   <tr>
                     <td colSpan={4} className="px-4 py-6 text-center text-slate-500">
-                      No hay registros de inventario.
+                      {busquedaInventario ? 'No hay productos que coincidan.' : 'No hay registros de inventario.'}
                     </td>
                   </tr>
                 ) : (
-                  inventario.map((item) => {
+                  inventarioFiltrado.map((item) => {
                     const id = item.id_inventario ?? item.id;
                     const stockActual = Number(item.stock_actual ?? 0);
                     const stockMinimo = Number(item.stock_minimo ?? 0);
@@ -216,9 +272,10 @@ export default function InventarioDashboard() {
                               min={0}
                               value={valorMostrado}
                               onChange={(e) => cambiarStockMin(id, e.target.value)}
-                              className="w-20 rounded-md border border-slate-300 px-2 py-1 text-sm"
+                              readOnly={!canWriteInventory}
+                              className={`w-20 rounded-md border border-slate-300 px-2 py-1 text-sm ${!canWriteInventory ? 'bg-slate-100' : ''}`}
                             />
-                            {cambioPendiente && (
+                            {cambioPendiente && canWriteInventory && (
                               <button
                                 type="button"
                                 onClick={() => guardarStockMin(item)}
@@ -230,7 +287,9 @@ export default function InventarioDashboard() {
                             )}
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-slate-600">{item.ultima_actualizacion || '-'}</td>
+                        <td className="px-4 py-3 text-slate-600 whitespace-normal text-xs sm:text-sm leading-snug">
+                          {formatFechaInventario(item.ultima_actualizacion)}
+                        </td>
                       </tr>
                     );
                   })
@@ -241,9 +300,17 @@ export default function InventarioDashboard() {
         </article>
 
         <article className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
-          <h3 className="mb-4 text-lg font-semibold text-slate-800">Registrar Movimiento</h3>
+          <h3 className="mb-4 text-lg font-semibold text-slate-800">Movimientos de Inventario</h3>
 
-          <form onSubmit={handleSubmitMovimiento} className="grid gap-3">
+          {canWriteInventory ? (
+          <form onSubmit={handleSubmitMovimiento} className="mb-6 grid gap-3">
+            <input
+              type="search"
+              value={busquedaProducto}
+              onChange={(e) => setBusquedaProducto(e.target.value)}
+              placeholder="Filtrar productos..."
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-sky-500"
+            />
             <select
               name="id_producto"
               value={formData.id_producto}
@@ -251,7 +318,7 @@ export default function InventarioDashboard() {
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 outline-none transition focus:border-sky-500"
             >
               <option value="">Selecciona un producto</option>
-              {productos.map((producto) => (
+              {productosFiltrados.map((producto) => (
                 <option key={producto.id_producto ?? producto.id} value={producto.id_producto ?? producto.id}>
                   {producto.nombre}
                 </option>
@@ -303,8 +370,13 @@ export default function InventarioDashboard() {
               {saving ? 'Registrando...' : 'Registrar Movimiento'}
             </button>
           </form>
+          ) : (
+            <p className="mb-6 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+              Tu rol tiene acceso de solo lectura al inventario. Los movimientos manuales requieren perfil Administrador o Bodeguero.
+            </p>
+          )}
 
-          <div className="mt-6">
+          <div className="mt-2">
             <h4 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-600">Ultimos Movimientos</h4>
             <div className="max-h-64 overflow-auto rounded-lg border border-slate-200">
               <table className="min-w-full text-left text-xs whitespace-nowrap">

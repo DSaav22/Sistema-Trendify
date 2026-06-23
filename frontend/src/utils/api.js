@@ -37,9 +37,18 @@ api.interceptors.response.use(
   (error) => {
     const status = error?.response?.status;
     const requestUrl = String(error?.config?.url || '');
+    const detail = String(error?.response?.data?.detail || '').toLowerCase();
 
-    // Evita logout global por credenciales invalidas en el formulario de login.
-    if (status === 401 && !requestUrl.includes('/api/auth/login/')) {
+    const esFalloAuth =
+      status === 401
+      || (status === 403 && (
+        detail.includes('credenciales')
+        || detail.includes('token')
+        || detail.includes('autentic')
+        || detail.includes('authentication')
+      ));
+
+    if (esFalloAuth && !requestUrl.includes('/api/auth/login/')) {
       window.dispatchEvent(new CustomEvent('auth:unauthorized'));
     }
 

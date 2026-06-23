@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import api from '../utils/api';
+import { buildReciboUrl } from '../utils/formHelpers';
 
 const VENTAS_URL = '/api/ventas/';
 
 const ESTADOS = [
-  { value: 'pendiente_validacion', label: 'Pendientes' },
+  { value: 'pendiente_validacion', label: 'Pendientes online' },
+  { value: 'pendiente_verificacion', label: 'Pagos QR/transferencia' },
   { value: 'completada', label: 'Completadas' },
   { value: 'rechazada', label: 'Rechazadas' },
   { value: '', label: 'Todas' },
@@ -29,11 +31,26 @@ function formatDate(value) {
   });
 }
 
+function labelEstado(estado) {
+  const e = (estado || '').toLowerCase();
+  if (e === 'pendiente_validacion') return 'Pendiente online';
+  if (e === 'pendiente_verificacion') return 'Pendiente verificación';
+  if (e === 'completada') return 'Completada';
+  if (e === 'rechazada') return 'Rechazada';
+  return estado || '-';
+}
+
+function esPendienteAccion(estado) {
+  const e = (estado || '').toLowerCase();
+  return e === 'pendiente_validacion' || e === 'pendiente_verificacion';
+}
+
 function badgeEstado(estado) {
   const e = (estado || '').toLowerCase();
   if (e === 'completada') return 'bg-emerald-100 text-emerald-700';
   if (e === 'rechazada') return 'bg-red-100 text-red-700';
   if (e === 'pendiente_validacion') return 'bg-amber-100 text-amber-700';
+  if (e === 'pendiente_verificacion') return 'bg-orange-100 text-orange-800';
   return 'bg-slate-100 text-slate-700';
 }
 
@@ -43,12 +60,106 @@ function normalizeList(data) {
   return [];
 }
 
+function PedidoDetalleModal({ venta, open, onClose }) {
+  if (!open || !venta) return null;
+
+  const detalles = venta.detalles_venta || [];
+  const completada = (venta.estado_venta || '').toLowerCase() === 'completada';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4" onClick={onClose}>
+      <div
+        className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+          <div>
+            <h3 className="text-lg font-bold text-slate-900">Pedido #{venta.id_venta}</h3>
+            <p className="text-sm text-slate-500">{venta.cliente_nombre || '-'} · {formatDate(venta.fecha_hora)}</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-100">
+            X
+          </button>
+        </div>
+
+        <div className="overflow-y-auto p-5">
+          <div className="mb-4 grid gap-2 text-sm sm:grid-cols-2">
+            <p><span className="font-semibold text-slate-600">Metodo pago:</span> {venta.metodo_pago || '-'}</p>
+            <p><span className="font-semibold text-slate-600">Estado:</span> {labelEstado(venta.estado_venta)}</p>
+            <p><span className="font-semibold text-slate-600">Comprobante:</span> {venta.numero_comprobante || '-'}</p>
+            <p><span className="font-semibold text-slate-600">Total:</span> {formatCurrency(venta.monto_total)}</p>
+          </div>
+
+          <h4 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">Productos</h4>
+          {detalles.length === 0 ? (
+            <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-500">Sin detalle de productos.</p>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="min-w-full text-left text-sm">
+                <thead className="bg-slate-50 text-slate-700">
+                  <tr>
+                    <th className="px-3 py-2 font-semibold">Producto</th>
+                    <th className="px-3 py-2 font-semibold">Cant.</th>
+                    <th className="px-3 py-2 font-semibold">Subtotal</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detalles.map((det) => (
+                    <tr key={det.id_detalle_venta} className="border-t border-slate-100">
+                      <td className="px-3 py-2 text-slate-800">{det.producto_nombre || det.id_producto}</td>
+                      <td className="px-3 py-2 text-slate-700">{det.cantidad}</td>
+                      <td className="px-3 py-2 font-medium text-slate-800">{formatCurrency(det.subtotal)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {completada && (
+            <div className="mt-4 flex flex-wrap gap-3">
+              <a
+                href={buildReciboUrl(venta.id_venta, 'html')}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800"
+              >
+                Recibo HTML
+              </a>
+              <a
+                href={buildReciboUrl(venta.id_venta, 'pdf')}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-bold text-white hover:bg-sky-700"
+              >
+                Recibo PDF
+              </a>
+            </div>
+          )}
+        </div>
+
+        <div className="border-t border-slate-100 p-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800"
+          >
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function PedidosOnlineManager() {
   const [ventas, setVentas] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [filtroEstado, setFiltroEstado] = useState('pendiente_validacion');
+  const [busqueda, setBusqueda] = useState('');
+  const [pedidoDetalle, setPedidoDetalle] = useState(null);
   const [accionEnCurso, setAccionEnCurso] = useState(null);
 
   // Modal de rechazo: pide motivo.
@@ -121,7 +232,19 @@ export default function PedidosOnlineManager() {
     }
   };
 
-  const conteo = useMemo(() => ventas.length, [ventas]);
+  const ventasFiltradas = useMemo(() => {
+    const q = busqueda.trim().toLowerCase();
+    if (!q) return ventas;
+    return ventas.filter(
+      (v) =>
+        String(v.id_venta).includes(q) ||
+        String(v.cliente_nombre || '').toLowerCase().includes(q) ||
+        String(v.numero_comprobante || '').toLowerCase().includes(q) ||
+        String(v.metodo_pago || '').toLowerCase().includes(q)
+    );
+  }, [ventas, busqueda]);
+
+  const conteo = useMemo(() => ventasFiltradas.length, [ventasFiltradas]);
 
   return (
     <section className="mx-auto w-full max-w-7xl">
@@ -130,7 +253,7 @@ export default function PedidosOnlineManager() {
           <div>
             <h2 className="text-2xl font-bold text-slate-800">Pedidos Online</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Revisa los pagos enviados desde la tienda y confirma o rechaza cada pedido.
+              Revisa pedidos online y ventas POS con pago QR o transferencia pendiente de verificación.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -169,6 +292,14 @@ export default function PedidosOnlineManager() {
           Mostrando {conteo} pedido(s) {filtroEstado ? `con estado "${filtroEstado}"` : ''}.
         </p>
 
+        <input
+          type="search"
+          value={busqueda}
+          onChange={(e) => setBusqueda(e.target.value)}
+          placeholder="Buscar por #, cliente, comprobante o metodo de pago..."
+          className="mb-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-sky-500"
+        />
+
         <div className="overflow-x-auto rounded-xl border border-slate-200">
           <table className="min-w-full text-left text-sm whitespace-nowrap">
             <thead className="bg-slate-50 text-slate-700">
@@ -188,14 +319,16 @@ export default function PedidosOnlineManager() {
                 <tr>
                   <td colSpan={8} className="px-4 py-6 text-center text-slate-500">Cargando pedidos...</td>
                 </tr>
-              ) : ventas.length === 0 ? (
+              ) : ventasFiltradas.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-6 text-center text-slate-500">No hay pedidos para mostrar.</td>
+                  <td colSpan={8} className="px-4 py-6 text-center text-slate-500">
+                    {busqueda ? 'No hay pedidos que coincidan con la busqueda.' : 'No hay pedidos para mostrar.'}
+                  </td>
                 </tr>
               ) : (
-                ventas.map((venta) => {
+                ventasFiltradas.map((venta) => {
                   const enCurso = accionEnCurso === venta.id_venta;
-                  const esPendiente = (venta.estado_venta || '').toLowerCase() === 'pendiente_validacion';
+                  const pendiente = esPendienteAccion(venta.estado_venta);
                   return (
                     <tr key={venta.id_venta} className="border-t border-slate-100 align-top hover:bg-slate-50">
                       <td className="px-4 py-3 font-bold text-slate-800">#{venta.id_venta}</td>
@@ -206,12 +339,20 @@ export default function PedidosOnlineManager() {
                       <td className="px-4 py-3 font-bold text-slate-800">{formatCurrency(venta.monto_total)}</td>
                       <td className="px-4 py-3">
                         <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeEstado(venta.estado_venta)}`}>
-                          {venta.estado_venta || '-'}
+                          {labelEstado(venta.estado_venta)}
                         </span>
                       </td>
                       <td className="px-4 py-3">
-                        {esPendiente ? (
-                          <div className="flex flex-wrap gap-2">
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setPedidoDetalle(venta)}
+                            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                          >
+                            Detalle
+                          </button>
+                          {pendiente ? (
+                            <>
                             <button
                               onClick={() => confirmarVenta(venta)}
                               disabled={enCurso}
@@ -226,10 +367,11 @@ export default function PedidosOnlineManager() {
                             >
                               Rechazar
                             </button>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-slate-400">Sin acciones</span>
-                        )}
+                            </>
+                          ) : (
+                            <span className="self-center text-xs text-slate-400">Sin acciones</span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -277,6 +419,12 @@ export default function PedidosOnlineManager() {
           </div>
         </div>
       )}
+
+      <PedidoDetalleModal
+        venta={pedidoDetalle}
+        open={Boolean(pedidoDetalle)}
+        onClose={() => setPedidoDetalle(null)}
+      />
     </section>
   );
 }

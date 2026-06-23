@@ -1,19 +1,21 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import api from './src/utils/api';
+import { filtrarPorTexto } from './src/utils/formHelpers';
 
 const API_URL = '/api/roles/';
+
+const EMPTY_FORM = { nombre_rol: '', descripcion: '' };
 
 export default function RolManager() {
   const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-
-  const [formData, setFormData] = useState({
-    nombre_rol: '',
-    descripcion: '',
-  });
+  const [success, setSuccess] = useState('');
+  const [busqueda, setBusqueda] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [formData, setFormData] = useState(EMPTY_FORM);
 
   const fetchRoles = async () => {
     setLoading(true);
@@ -34,6 +36,16 @@ export default function RolManager() {
     fetchRoles();
   }, []);
 
+  const rolesFiltrados = useMemo(
+    () => filtrarPorTexto(roles, busqueda, ['nombre_rol', 'descripcion']),
+    [roles, busqueda]
+  );
+
+  const resetForm = () => {
+    setFormData(EMPTY_FORM);
+    setEditingId(null);
+  };
+
   const handleChange = (event) => {
     const { name, value } = event.target;
     setFormData((prev) => ({
@@ -42,27 +54,45 @@ export default function RolManager() {
     }));
   };
 
+  const handleEdit = (rol) => {
+    setError('');
+    setSuccess('');
+    setEditingId(rol.id_rol ?? rol.id);
+    setFormData({
+      nombre_rol: rol.nombre_rol || '',
+      descripcion: rol.descripcion || '',
+    });
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError('');
+    setSuccess('');
 
     if (!formData.nombre_rol.trim()) {
       setError('El nombre del rol es obligatorio.');
       return;
     }
 
+    const payload = {
+      nombre_rol: formData.nombre_rol.trim(),
+      descripcion: formData.descripcion.trim(),
+    };
+
     setSaving(true);
     try {
-      await api.post(API_URL, {
-        nombre_rol: formData.nombre_rol.trim(),
-        descripcion: formData.descripcion.trim(),
-      });
-
-      setFormData({ nombre_rol: '', descripcion: '' });
+      if (editingId) {
+        await api.patch(`${API_URL}${editingId}/`, payload);
+        setSuccess(`Rol #${editingId} actualizado.`);
+      } else {
+        await api.post(API_URL, payload);
+        setSuccess('Rol creado correctamente.');
+      }
+      resetForm();
       await fetchRoles();
     } catch (err) {
-      console.error('Error al crear rol:', err);
-      setError('No se pudo crear el rol. Revisa los datos e intenta nuevamente.');
+      console.error('Error al guardar rol:', err);
+      setError('No se pudo guardar el rol. Revisa los datos e intenta nuevamente.');
     } finally {
       setSaving(false);
     }
@@ -76,6 +106,7 @@ export default function RolManager() {
     try {
       await api.delete(`${API_URL}${idRol}/`);
       setRoles((prev) => prev.filter((rol) => (rol.id_rol ?? rol.id) !== idRol));
+      if (editingId === idRol) resetForm();
     } catch (err) {
       console.error('Error al eliminar rol:', err);
       setError('No se pudo eliminar el rol. Puede tener usuarios asociados.');
@@ -89,6 +120,12 @@ export default function RolManager() {
           <h2 className="text-2xl font-bold text-slate-800">Gestion de Roles</h2>
           <p className="mt-1 text-sm text-slate-500">Crea y administra los perfiles de acceso del sistema.</p>
         </header>
+
+        {editingId && (
+          <p className="mb-3 inline-flex rounded-full bg-amber-100 px-3 py-1 text-xs font-bold uppercase tracking-wider text-amber-800">
+            Editando rol #{editingId}
+          </p>
+        )}
 
         <form onSubmit={handleSubmit} className="mb-6 grid gap-3 md:grid-cols-3">
           <input
@@ -109,18 +146,42 @@ export default function RolManager() {
             className="rounded-lg border border-slate-300 px-3 py-2 outline-none transition focus:border-sky-500"
           />
 
-          <button
-            type="submit"
-            disabled={saving}
-            className="rounded-lg bg-slate-900 px-4 py-2 font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {saving ? 'Guardando...' : 'Crear Rol'}
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              disabled={saving}
+              className={`flex-1 rounded-lg px-4 py-2 font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                editingId ? 'bg-red-600 hover:bg-red-700' : 'bg-slate-900 hover:bg-slate-800'
+              }`}
+            >
+              {saving ? 'Guardando...' : editingId ? 'Actualizar' : 'Crear Rol'}
+            </button>
+            {editingId && (
+              <button
+                type="button"
+                onClick={resetForm}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+            )}
+          </div>
         </form>
 
         {error && (
           <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
         )}
+        {success && (
+          <p className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{success}</p>
+        )}
+
+        <input
+          type="search"
+          value={busqueda}
+          onChange={(e) => setBusqueda(e.target.value)}
+          placeholder="Buscar rol..."
+          className="mb-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-sky-500"
+        />
 
         <div className="overflow-x-auto max-w-full rounded-xl border border-slate-200">
           <table className="min-w-full text-left text-sm whitespace-nowrap">
@@ -139,14 +200,14 @@ export default function RolManager() {
                     Cargando roles...
                   </td>
                 </tr>
-              ) : roles.length === 0 ? (
+              ) : rolesFiltrados.length === 0 ? (
                 <tr>
                   <td colSpan={4} className="px-4 py-6 text-center text-slate-500">
-                    No hay roles registrados.
+                    {busqueda ? 'No hay roles que coincidan.' : 'No hay roles registrados.'}
                   </td>
                 </tr>
               ) : (
-                roles.map((rol) => {
+                rolesFiltrados.map((rol) => {
                   const id = rol.id_rol ?? rol.id;
                   return (
                     <tr key={id} className="border-t border-slate-100">
@@ -154,12 +215,20 @@ export default function RolManager() {
                       <td className="px-4 py-3 font-medium text-slate-800">{rol.nombre_rol}</td>
                       <td className="px-4 py-3 text-slate-700">{rol.descripcion || '-'}</td>
                       <td className="px-4 py-3">
-                        <button
-                          onClick={() => handleDelete(id)}
-                          className="rounded-md bg-red-600 px-3 py-1.5 text-white transition hover:bg-red-700"
-                        >
-                          Eliminar
-                        </button>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleEdit(rol)}
+                            className="rounded-md bg-sky-600 px-3 py-1.5 text-white transition hover:bg-sky-700"
+                          >
+                            Editar
+                          </button>
+                          <button
+                            onClick={() => handleDelete(id)}
+                            className="rounded-md bg-red-600 px-3 py-1.5 text-white transition hover:bg-red-700"
+                          >
+                            Eliminar
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

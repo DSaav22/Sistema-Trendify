@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 
 import api from '../utils/api';
 import ProductoImagen from './ProductoImagen';
+import ProductoDetalleModal from './ProductoDetalleModal';
+import { filtrarPorTexto } from '../utils/formHelpers';
 
 const CLIENTES_URL = '/api/clientes/';
 const PRODUCTOS_URL = '/api/productos/';
@@ -29,6 +31,31 @@ function buildReciboUrl(idVenta, formato) {
   return base ? `${base.replace(/\/$/, '')}${path}` : path;
 }
 
+function badgeEstadoVenta(estado) {
+  const e = (estado || '').toLowerCase();
+  if (e === 'completada') return 'bg-emerald-100 text-emerald-700';
+  if (e === 'rechazada') return 'bg-red-100 text-red-700';
+  if (e === 'pendiente_validacion') return 'bg-amber-100 text-amber-700';
+  if (e === 'pendiente_verificacion') return 'bg-orange-100 text-orange-800';
+  return 'bg-slate-100 text-slate-700';
+}
+
+function labelEstadoVenta(estado) {
+  const e = (estado || '').toLowerCase();
+  if (e === 'completada') return 'Completada';
+  if (e === 'rechazada') return 'Rechazada';
+  if (e === 'pendiente_validacion') return 'Pendiente validacion';
+  if (e === 'pendiente_verificacion') return 'Pago pendiente verificacion';
+  return estado || '-';
+}
+
+function formatDate(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('es-BO', { dateStyle: 'short', timeStyle: 'short' });
+}
+
 export default function CajaManager() {
   const [clientes, setClientes] = useState([]);
   const [productos, setProductos] = useState([]);
@@ -52,6 +79,11 @@ export default function CajaManager() {
   // Modal post-venta (CU10)
   const [ventaConfirmada, setVentaConfirmada] = useState(null);
 
+  const [ventasRecientes, setVentasRecientes] = useState([]);
+  const [cargandoVentas, setCargandoVentas] = useState(false);
+  const [productoDetalle, setProductoDetalle] = useState(null);
+  const [busquedaProducto, setBusquedaProducto] = useState('');
+
   const totalVenta = useMemo(
     () => carrito.reduce((acc, item) => acc + item.cantidad * Number(item.precio_unitario), 0),
     [carrito]
@@ -70,6 +102,31 @@ export default function CajaManager() {
       ) || null,
     [clientes, idCliente]
   );
+
+  const productosActivos = useMemo(
+    () => productos.filter((p) => (p.estado || '').toLowerCase() === 'activo'),
+    [productos]
+  );
+
+  const productosVisibles = useMemo(
+    () => filtrarPorTexto(productosActivos, busquedaProducto, ['nombre', 'descripcion']),
+    [productosActivos, busquedaProducto]
+  );
+
+  const cargarVentasRecientes = async () => {
+    setCargandoVentas(true);
+    try {
+      const { data } = await api.get(VENTAS_URL);
+      const lista = normalizeList(data)
+        .sort((a, b) => new Date(b.fecha_hora) - new Date(a.fecha_hora))
+        .slice(0, 15);
+      setVentasRecientes(lista);
+    } catch (err) {
+      console.error('Error cargando historial de ventas:', err);
+    } finally {
+      setCargandoVentas(false);
+    }
+  };
 
   const cargarDatos = async () => {
     setLoading(true);
@@ -105,6 +162,7 @@ export default function CajaManager() {
 
   useEffect(() => {
     cargarDatos();
+    cargarVentasRecientes();
   }, []);
 
   const agregarAlCarrito = (producto) => {
@@ -142,6 +200,26 @@ export default function CajaManager() {
         item.id_producto === idProducto ? { ...item, cantidad: item.cantidad + 1 } : item
       );
     });
+  };
+
+  const cambiarCantidadCarrito = (idProducto, delta) => {
+    setError('');
+    const stockDisponible = Number(stockPorProducto[idProducto] ?? 0);
+
+    setCarrito((prev) =>
+      prev
+        .map((item) => {
+          if (item.id_producto !== idProducto) return item;
+          const nuevaCantidad = item.cantidad + delta;
+          if (nuevaCantidad <= 0) return null;
+          if (nuevaCantidad > stockDisponible) {
+            setError(`Stock insuficiente. Maximo disponible: ${stockDisponible}.`);
+            return item;
+          }
+          return { ...item, cantidad: nuevaCantidad };
+        })
+        .filter(Boolean)
+    );
   };
 
   const eliminarDelCarrito = (idProducto) => {
@@ -188,7 +266,6 @@ export default function CajaManager() {
       const payload = {
         id_cliente: Number(idCliente),
         metodo_pago: metodoPago,
-        estado_venta: 'completada',
         detalles: carrito.map((item) => ({
           id_producto: item.id_producto,
           cantidad: item.cantidad,
@@ -204,14 +281,25 @@ export default function CajaManager() {
 
       const { data } = await api.post(VENTAS_URL, payload);
 
-      setVentaConfirmada({
-        ...data,
-        cliente: clienteSeleccionado,
-      });
-      setSuccess(`Venta #${data.id_venta} registrada correctamente.`);
+      const estado = (data.estado_venta || '').toLowerCase();
+      if (estado === 'completada') {
+        setVentaConfirmada({
+          ...data,
+          cliente: clienteSeleccionado,
+        });
+        setSuccess(`Venta #${data.id_venta} registrada correctamente.`);
+      } else if (estado === 'pendiente_verificacion') {
+        setSuccess(
+          `Venta #${data.id_venta} registrada. El pago QR/transferencia queda pendiente de verificacion en Pedidos Online.`
+        );
+      } else {
+        setSuccess(`Venta #${data.id_venta} registrada (estado: ${data.estado_venta}).`);
+      }
+
       setCarrito([]);
       setShowPagoModal(false);
       await cargarDatos();
+      await cargarVentasRecientes();
     } catch (err) {
       console.error('Error registrando venta:', err);
       setError(err?.response?.data?.detail || 'No se pudo registrar la venta.');
@@ -234,6 +322,7 @@ export default function CajaManager() {
   const enviarPorWhatsApp = () => {
     if (!ventaConfirmada) return;
     const tel = (ventaConfirmada.cliente?.telefono || '').replace(/\D/g, '');
+    const telWa = tel ? (tel.startsWith('591') ? tel : `591${tel}`) : '';
     const reciboUrl = buildReciboUrl(ventaConfirmada.id_venta, 'html');
     const mensaje = encodeURIComponent(
       `Gracias por tu compra en Trendify!\n` +
@@ -241,7 +330,7 @@ export default function CajaManager() {
         `Total: ${formatCurrency(ventaConfirmada.monto_total)}\n` +
         `Recibo: ${reciboUrl}`
     );
-    const url = tel ? `https://wa.me/${tel}?text=${mensaje}` : `https://wa.me/?text=${mensaje}`;
+    const url = telWa ? `https://wa.me/${telWa}?text=${mensaje}` : `https://wa.me/?text=${mensaje}`;
     window.open(url, '_blank', 'noopener');
   };
 
@@ -314,7 +403,27 @@ export default function CajaManager() {
                   carrito.map((item) => (
                     <tr key={item.id_producto} className="border-t border-slate-100">
                       <td className="px-4 py-3 text-slate-700">{item.nombre}</td>
-                      <td className="px-4 py-3 text-slate-700">{item.cantidad}</td>
+                      <td className="px-4 py-3 text-slate-700">
+                        <div className="inline-flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => cambiarCantidadCarrito(item.id_producto, -1)}
+                            className="rounded-md border border-slate-300 px-2 py-0.5 text-slate-700 hover:bg-slate-100"
+                            aria-label="Disminuir cantidad"
+                          >
+                            -
+                          </button>
+                          <span className="min-w-[1.5rem] text-center">{item.cantidad}</span>
+                          <button
+                            type="button"
+                            onClick={() => cambiarCantidadCarrito(item.id_producto, 1)}
+                            className="rounded-md border border-slate-300 px-2 py-0.5 text-slate-700 hover:bg-slate-100"
+                            aria-label="Aumentar cantidad"
+                          >
+                            +
+                          </button>
+                        </div>
+                      </td>
                       <td className="px-4 py-3 text-slate-700">
                         {formatCurrency(item.cantidad * Number(item.precio_unitario))}
                       </td>
@@ -352,45 +461,172 @@ export default function CajaManager() {
         <article className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
           <h3 className="mb-4 text-lg font-semibold text-slate-800">Catalogo de Productos</h3>
 
+          <input
+            type="search"
+            value={busquedaProducto}
+            onChange={(e) => setBusquedaProducto(e.target.value)}
+            placeholder="Buscar producto..."
+            className="mb-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-sky-500"
+          />
+
           {loading ? (
             <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
               Cargando catalogo...
             </p>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
-              {productos.map((producto) => {
+              {productosVisibles.length === 0 ? (
+                <p className="col-span-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-600">
+                  {busquedaProducto ? 'No hay productos que coincidan con la busqueda.' : 'No hay productos activos.'}
+                </p>
+              ) : (
+              productosVisibles.map((producto) => {
                 const id = Number(producto.id_producto ?? producto.id);
                 const stock = Number(stockPorProducto[id] ?? 0);
 
                 return (
                   <div key={id} className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
-                    <ProductoImagen
-                      idProducto={id}
-                      nombre={producto.nombre}
-                      imagenSrc={producto.atributos?.imagen_data_uri}
-                      className="aspect-square w-full"
-                    />
+                    <button
+                      type="button"
+                      onClick={() => setProductoDetalle(producto)}
+                      className="block w-full text-left"
+                    >
+                      <ProductoImagen
+                        idProducto={id}
+                        nombre={producto.nombre}
+                        imagenSrc={producto.atributos?.imagen_data_uri}
+                        className="aspect-square w-full"
+                      />
+                    </button>
                     <div className="p-4">
-                      <p className="font-semibold text-slate-800">{producto.nombre}</p>
+                      <button
+                        type="button"
+                        onClick={() => setProductoDetalle(producto)}
+                        className="text-left font-semibold text-slate-800 hover:text-sky-700"
+                      >
+                        {producto.nombre}
+                      </button>
                       <p className="mt-1 text-sm text-slate-500">Precio: {formatCurrency(producto.precio_venta)}</p>
                       <p className="text-sm text-slate-500">Stock: {stock}</p>
 
-                      <button
-                        type="button"
-                        onClick={() => agregarAlCarrito(producto)}
-                        disabled={stock <= 0}
-                        className="mt-3 w-full rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        + Agregar al Carrito
-                      </button>
+                      <div className="mt-3 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setProductoDetalle(producto)}
+                          className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                        >
+                          Ver detalle
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => agregarAlCarrito(producto)}
+                          disabled={stock <= 0}
+                          className="flex-1 rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          + Agregar
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
-              })}
+              })
+              )}
             </div>
           )}
         </article>
       </div>
+
+      <article className="mt-6 rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-lg font-semibold text-slate-800">Historial de ventas recientes</h3>
+          <button
+            type="button"
+            onClick={cargarVentasRecientes}
+            disabled={cargandoVentas}
+            className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            {cargandoVentas ? 'Actualizando...' : 'Actualizar'}
+          </button>
+        </div>
+
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="min-w-full text-left text-sm whitespace-nowrap">
+            <thead className="bg-slate-50 text-slate-700">
+              <tr>
+                <th className="px-4 py-3 font-semibold">#</th>
+                <th className="px-4 py-3 font-semibold">Fecha</th>
+                <th className="px-4 py-3 font-semibold">Cliente</th>
+                <th className="px-4 py-3 font-semibold">Usuario</th>
+                <th className="px-4 py-3 font-semibold">Total</th>
+                <th className="px-4 py-3 font-semibold">Pago</th>
+                <th className="px-4 py-3 font-semibold">Estado</th>
+                <th className="px-4 py-3 font-semibold">Recibo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cargandoVentas && ventasRecientes.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-6 text-center text-slate-500">
+                    Cargando ventas...
+                  </td>
+                </tr>
+              ) : ventasRecientes.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-6 text-center text-slate-500">
+                    No hay ventas registradas.
+                  </td>
+                </tr>
+              ) : (
+                ventasRecientes.map((venta) => {
+                  const id = venta.id_venta ?? venta.id;
+                  const puedeRecibo = (venta.estado_venta || '').toLowerCase() === 'completada';
+                  return (
+                    <tr key={id} className="border-t border-slate-100">
+                      <td className="px-4 py-3 font-medium text-slate-800">#{id}</td>
+                      <td className="px-4 py-3 text-slate-600">{formatDate(venta.fecha_hora)}</td>
+                      <td className="px-4 py-3 text-slate-700">{venta.cliente_nombre || '-'}</td>
+                      <td className="px-4 py-3 text-slate-600">{venta.usuario_nombre || '-'}</td>
+                      <td className="px-4 py-3 text-slate-700">{formatCurrency(venta.monto_total)}</td>
+                      <td className="px-4 py-3 text-slate-600 uppercase">{venta.metodo_pago || '-'}</td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-xs font-semibold ${badgeEstadoVenta(venta.estado_venta)}`}
+                        >
+                          {labelEstadoVenta(venta.estado_venta)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        {puedeRecibo ? (
+                          <div className="flex gap-2">
+                            <a
+                              href={buildReciboUrl(id, 'html')}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-sky-600 hover:underline"
+                            >
+                              HTML
+                            </a>
+                            <a
+                              href={buildReciboUrl(id, 'pdf')}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-sky-600 hover:underline"
+                            >
+                              PDF
+                            </a>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-slate-400">Pendiente</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </article>
 
       {showPagoModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 px-4">
@@ -433,6 +669,12 @@ export default function CajaManager() {
                     </p>
                   </div>
                 </>
+              )}
+
+              {(metodoPago === 'qr' || metodoPago === 'transferencia') && (
+                <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  El pago quedara <strong>pendiente de verificacion</strong> hasta que un administrador lo confirme en Pedidos Online.
+                </p>
               )}
 
               {(metodoPago === 'qr' || metodoPago === 'transferencia') && (
@@ -547,6 +789,18 @@ export default function CajaManager() {
           </div>
         </div>
       )}
+
+      <ProductoDetalleModal
+        producto={productoDetalle}
+        open={Boolean(productoDetalle)}
+        onClose={() => setProductoDetalle(null)}
+        onAddToCart={agregarAlCarrito}
+        stockActual={
+          productoDetalle
+            ? Number(stockPorProducto[Number(productoDetalle.id_producto ?? productoDetalle.id)] ?? 0)
+            : 0
+        }
+      />
     </section>
   );
 }

@@ -5,7 +5,8 @@ from io import BytesIO
 from urllib.parse import urlencode
 
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, OuterRef, Subquery, IntegerField
+from django.db.models.functions import Coalesce
 from django.db.utils import OperationalError, ProgrammingError
 from django.http import HttpResponse, Http404
 from django.shortcuts import get_object_or_404
@@ -18,6 +19,8 @@ from rest_framework.views import APIView
 from rest_framework import status, viewsets
 from rest_framework.response import Response
 import stripe
+
+from .authentication import CustomJWTAuthentication
 
 # Importa modelos y serializers de esta misma app.
 from .models import (
@@ -49,6 +52,7 @@ from .serializers import (
     MarcaSerializer,
     MovimientoInventarioSerializer,
     PedidoGuardadoSerializer,
+    ProductoPublicoSerializer,
     ProductoSerializer,
     ProveedorSerializer,
     RolSerializer,
@@ -97,6 +101,51 @@ def _estado_pago_desde_estado_venta(estado_venta):
     if estado == 'rechazada':
         return 'rechazado'
     return 'pendiente'
+
+
+def _estado_venta_pos_desde_metodo_pago(metodo_pago):
+    """CU08/CU09: efectivo y tarjeta completan la venta; QR/transferencia quedan pendientes."""
+    metodo = (metodo_pago or '').strip().lower()
+    if metodo in ('qr', 'pago_movil_qr', 'transferencia'):
+        return 'pendiente_verificacion'
+    return 'completada'
+
+
+def _venta_pendiente_confirmacion(estado_venta):
+    estado = (estado_venta or '').strip().lower()
+    return estado in ('pendiente_validacion', 'pendiente_verificacion')
+
+
+def _validar_stock_y_productos_venta(detalles):
+    """Agrupa cantidades por producto y valida estado activo + stock (CU08/CU11)."""
+    cantidades_por_producto = {}
+    for detalle in detalles:
+        producto = detalle['id_producto']
+        pid = producto.pk
+        cantidad = int(detalle['cantidad'])
+        if cantidad <= 0:
+            raise ValueError('Cada item debe tener cantidad mayor a cero.')
+        cantidades_por_producto[pid] = cantidades_por_producto.get(pid, 0) + cantidad
+
+    errores = []
+    for pid, cantidad_total in cantidades_por_producto.items():
+        producto = Producto.objects.select_for_update().filter(pk=pid).first()
+        if producto is None:
+            errores.append(f'Producto no encontrado (id={pid}).')
+            continue
+        if (producto.estado or '').strip().lower() != 'activo':
+            errores.append(f'El producto "{producto.nombre}" no esta activo.')
+            continue
+        inventario = Inventario.objects.select_for_update().filter(id_producto=producto).first()
+        stock_disponible = int(inventario.stock_actual) if inventario else 0
+        if cantidad_total > stock_disponible:
+            errores.append(
+                f'Stock insuficiente para "{producto.nombre}". '
+                f'Disponible: {stock_disponible}, solicitado: {cantidad_total}.'
+            )
+
+    if errores:
+        raise ValueError(' '.join(errores))
 
 
 def _tabla_pago_transacciones_disponible():
@@ -332,6 +381,30 @@ class ProveedorViewSet(BitacoraMixin, viewsets.ModelViewSet):
     serializer_class = ProveedorSerializer
     permission_classes = [IsAdminOrComprasRole]
 
+    def create(self, request, *args, **kwargs):
+        nombre = (request.data.get('nombre_empresa') or '').strip()
+        if nombre and Proveedor.objects.filter(nombre_empresa__iexact=nombre).exists():
+            return Response(
+                {'detail': 'Ya existe un proveedor con ese nombre de empresa.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        nombre = (request.data.get('nombre_empresa') or instance.nombre_empresa or '').strip()
+        if (
+            nombre
+            and Proveedor.objects.filter(nombre_empresa__iexact=nombre)
+            .exclude(pk=instance.pk)
+            .exists()
+        ):
+            return Response(
+                {'detail': 'Ya existe otro proveedor con ese nombre de empresa.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().update(request, *args, **kwargs)
+
 
 class ProductoViewSet(BitacoraMixin, viewsets.ModelViewSet):
     queryset = Producto.objects.all()
@@ -350,6 +423,53 @@ class MisPedidosView(APIView):
         
         ventas = Venta.objects.filter(id_cliente=cliente).order_by('-fecha_hora').prefetch_related('detalles_venta')
         serializer = VentaSerializer(ventas, many=True)
+        return Response(serializer.data)
+
+
+class MiPerfilClienteView(APIView):
+    """Datos de envio del cliente autenticado (CU20)."""
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsClienteRole]
+
+    def get(self, request):
+        cliente = Cliente.objects.filter(id_usuario_fk=request.user).first()
+        if not cliente:
+            return Response(
+                {'detail': 'No existe un cliente asociado a tu usuario.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        serializer = ClienteSerializer(cliente)
+        return Response(serializer.data)
+
+    def patch(self, request):
+        cliente = Cliente.objects.filter(id_usuario_fk=request.user).first()
+        if not cliente:
+            return Response(
+                {'detail': 'No existe un cliente asociado a tu usuario.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        campos = {}
+        for campo in ('nombre_completo', 'telefono', 'ciudad', 'direccion'):
+            if campo in request.data:
+                valor = str(request.data.get(campo) or '').strip()
+                campos[campo] = valor
+
+        if not campos:
+            return Response({'detail': 'No hay campos para actualizar.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        telefono_nuevo = campos.get('telefono')
+        if telefono_nuevo and Cliente.objects.filter(telefono=telefono_nuevo).exclude(pk=cliente.pk).exists():
+            return Response(
+                {'detail': 'El telefono ya esta registrado por otro cliente.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        for campo, valor in campos.items():
+            setattr(cliente, campo, valor)
+        cliente.save(update_fields=list(campos.keys()))
+
+        serializer = ClienteSerializer(cliente)
         return Response(serializer.data)
 
 
@@ -447,15 +567,79 @@ class PedidoGuardadoDetalleView(APIView):
 
 
 class CategoriaPublicaViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Categoria.objects.all().order_by('nombre')
+    queryset = Categoria.objects.filter(estado__iexact='activo').order_by('nombre')
     serializer_class = CategoriaSerializer
     permission_classes = [AllowAny]
 
 
-class ProductoPublicoViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Producto.objects.select_related('id_categoria', 'id_marca').all().order_by('nombre')
-    serializer_class = ProductoSerializer
+class MarcaPublicaViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = Marca.objects.filter(estado__iexact='activo').order_by('nombre')
+    serializer_class = MarcaSerializer
     permission_classes = [AllowAny]
+
+
+class ProductoPublicoPagination(PageNumberPagination):
+    page_size = 48
+    page_size_query_param = 'page_size'
+    max_page_size = 200
+
+
+class ProductoPublicoViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = ProductoPublicoSerializer
+    permission_classes = [AllowAny]
+    pagination_class = ProductoPublicoPagination
+
+    def get_queryset(self):
+        stock_subquery = Inventario.objects.filter(
+            id_producto=OuterRef('pk')
+        ).values('stock_actual')[:1]
+
+        qs = (
+            Producto.objects
+            .select_related('id_categoria', 'id_marca')
+            .filter(estado__iexact='activo')
+            .annotate(
+                stock_actual=Coalesce(
+                    Subquery(stock_subquery, output_field=IntegerField()),
+                    0,
+                )
+            )
+            .filter(stock_actual__gt=0)
+            .order_by('nombre')
+        )
+
+        params = self.request.query_params
+        texto = (params.get('q') or '').strip()
+        if texto:
+            qs = qs.filter(
+                Q(nombre__icontains=texto)
+                | Q(id_marca__nombre__icontains=texto)
+                | Q(id_categoria__nombre__icontains=texto)
+            )
+
+        id_categoria = params.get('id_categoria')
+        if id_categoria:
+            qs = qs.filter(id_categoria_id=id_categoria)
+
+        id_marca = params.get('id_marca')
+        if id_marca:
+            qs = qs.filter(id_marca_id=id_marca)
+
+        precio_min = params.get('precio_min')
+        if precio_min not in (None, ''):
+            try:
+                qs = qs.filter(precio_venta__gte=Decimal(str(precio_min)))
+            except Exception:
+                pass
+
+        precio_max = params.get('precio_max')
+        if precio_max not in (None, ''):
+            try:
+                qs = qs.filter(precio_venta__lte=Decimal(str(precio_max)))
+            except Exception:
+                pass
+
+        return qs
 
 
 class InventarioViewSet(BitacoraMixin, viewsets.ModelViewSet):
@@ -578,14 +762,32 @@ class VentaViewSet(BitacoraMixin, viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='pendientes')
     def listar_pendientes(self, request):
-        qs = self.get_queryset().filter(estado_venta__iexact='pendiente_validacion')
+        qs = self.get_queryset().filter(
+            Q(estado_venta__iexact='pendiente_validacion')
+            | Q(estado_venta__iexact='pendiente_verificacion')
+        )
         serializer = self.get_serializer(qs, many=True)
         return Response(serializer.data)
+
+    def update(self, request, *args, **kwargs):
+        return Response(
+            {'detail': 'Las ventas no pueden modificarse despues de registrarse.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+    def partial_update(self, request, *args, **kwargs):
+        return self.update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        return Response(
+            {'detail': 'Las ventas no pueden eliminarse desde la API.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
 
     @action(detail=True, methods=['post'], url_path='confirmar')
     def confirmar(self, request, pk=None):
         venta = self.get_object()
-        if (venta.estado_venta or '').lower() != 'pendiente_validacion':
+        if not _venta_pendiente_confirmacion(venta.estado_venta):
             return Response(
                 {'detail': f'La venta no esta pendiente. Estado actual: {venta.estado_venta}.'},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -615,7 +817,7 @@ class VentaViewSet(BitacoraMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='rechazar')
     def rechazar(self, request, pk=None):
         venta = self.get_object()
-        if (venta.estado_venta or '').lower() != 'pendiente_validacion':
+        if not _venta_pendiente_confirmacion(venta.estado_venta):
             return Response(
                 {'detail': f'La venta no esta pendiente. Estado actual: {venta.estado_venta}.'},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -670,16 +872,22 @@ class VentaViewSet(BitacoraMixin, viewsets.ModelViewSet):
         numero_comprobante_in = (serializer.validated_data.get('numero_comprobante') or '').strip() or None
         imagen_qr_url_in = (serializer.validated_data.get('imagen_qr_url') or '').strip() or None
 
+        estado_venta = _estado_venta_pos_desde_metodo_pago(metodo_pago)
         monto_total = Decimal('0.00')
 
         with transaction.atomic():
+            try:
+                _validar_stock_y_productos_venta(detalles)
+            except ValueError as exc:
+                return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
             venta = Venta.objects.create(
                 id_cliente=serializer.validated_data['id_cliente'],
                 id_usuario=usuario,
                 fecha_hora=timezone.now(),
                 monto_total=Decimal('0.00'),
                 metodo_pago=metodo_pago,
-                estado_venta=serializer.validated_data.get('estado_venta') or 'completada',
+                estado_venta=estado_venta,
                 numero_comprobante=numero_comprobante_in,
                 imagen_qr_url=imagen_qr_url_in,
             )
@@ -786,6 +994,18 @@ class ReciboVentaView(APIView):
         if venta is None:
             raise Http404('Venta no encontrada.')
 
+        usuario = getattr(request, 'user', None)
+        if usuario is not None and getattr(usuario, 'is_authenticated', False) and hasattr(usuario, 'id_usuario'):
+            Bitacora.objects.create(
+                id_usuario=usuario,
+                accion='GENERAR_RECIBO',
+                tabla_afectada='ventas',
+                registro_afectado_id=venta.pk,
+                detalle=f'Consulta de recibo ({formato}) para venta #{venta.pk}.',
+                fecha_hora=timezone.now(),
+                direccion_ip=get_client_ip_from_request(request),
+            )
+
         detalles = (
             DetalleVenta.objects
             .select_related('id_producto')
@@ -828,6 +1048,21 @@ class CompraViewSet(BitacoraMixin, viewsets.ModelViewSet):
     )
     serializer_class = CompraSerializer
     permission_classes = [IsAdminOrComprasRole]
+
+    def update(self, request, *args, **kwargs):
+        return Response(
+            {'detail': 'Las compras no pueden modificarse despues de registrarse.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+    def partial_update(self, request, *args, **kwargs):
+        return self.update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        return Response(
+            {'detail': 'Las compras no pueden eliminarse desde la API.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -926,7 +1161,9 @@ def _obtener_idempotency_key_checkout(request):
 
 
 class CheckoutPublicoView(APIView):
-    permission_classes = [AllowAny]
+    """CU20: pedido online solo para cliente autenticado."""
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsClienteRole]
 
     def post(self, request, *args, **kwargs):
         cliente_data = request.data.get('cliente') or {}
@@ -976,40 +1213,44 @@ class CheckoutPublicoView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        usuario_autenticado = request.user if request.user and request.user.is_authenticated else None
-        cliente_autenticado = None
-        if usuario_autenticado and extract_user_role_id(usuario_autenticado) == ROLE_CLIENTE:
-            cliente_autenticado = Cliente.objects.filter(id_usuario_fk=usuario_autenticado).first()
+        cliente_autenticado = Cliente.objects.filter(id_usuario_fk=request.user).first()
+        if cliente_autenticado is None:
+            return Response(
+                {'detail': 'No existe un cliente asociado a tu usuario.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        if cliente_autenticado:
-            nombre = cliente_autenticado.nombre_completo
-            telefono = cliente_autenticado.telefono or ''
-            ciudad = cliente_autenticado.ciudad or ''
-            direccion = cliente_autenticado.direccion or ''
-        elif usuario_autenticado and extract_user_role_id(usuario_autenticado) == ROLE_CLIENTE:
-            # Compatibilidad: algunos clientes existentes no tienen fila en `clientes`
-            # vinculada por id_usuario_fk. Creamos una ficha minima para no bloquear checkout.
-            nombre = str(getattr(usuario_autenticado, 'nombre_completo', '') or '').strip() or str(getattr(usuario_autenticado, 'username', '') or '').strip()
-            telefono = str(cliente_data.get('telefono') or '').strip()
-            ciudad = str(cliente_data.get('ciudad') or '').strip()
-            direccion = str(cliente_data.get('direccion') or '').strip()
-        else:
-            nombre = str(cliente_data.get('nombre') or '').strip()
-            telefono = str(cliente_data.get('telefono') or '').strip()
-            ciudad = str(cliente_data.get('ciudad') or '').strip()
-            direccion = str(cliente_data.get('direccion') or '').strip()
+        nombre = str(cliente_data.get('nombre') or cliente_autenticado.nombre_completo or '').strip()
+        telefono = str(cliente_data.get('telefono') or cliente_autenticado.telefono or '').strip()
+        ciudad = str(cliente_data.get('ciudad') or cliente_autenticado.ciudad or '').strip()
+        direccion = str(cliente_data.get('direccion') or cliente_autenticado.direccion or '').strip()
 
-            if not nombre or not telefono or not ciudad or not direccion:
-                return Response(
-                    {'detail': 'Cliente incompleto: nombre, telefono, ciudad y direccion son obligatorios.'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+        if not nombre or not telefono or not ciudad or not direccion:
+            return Response(
+                {'detail': 'Completa nombre, telefono, ciudad y direccion de envio antes de confirmar.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if not isinstance(carrito, list) or not carrito:
             return Response(
                 {'detail': 'El carrito debe contener al menos un producto.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        cantidades_por_producto = {}
+        for item in carrito:
+            id_producto = item.get('id_producto') or item.get('id')
+            try:
+                cantidad = int(item.get('cantidad', 0))
+            except (TypeError, ValueError):
+                return Response({'detail': 'Cantidad invalida en carrito.'}, status=status.HTTP_400_BAD_REQUEST)
+            if not id_producto or cantidad <= 0:
+                return Response(
+                    {'detail': 'Cada item del carrito requiere id_producto y cantidad > 0.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            pid = int(id_producto)
+            cantidades_por_producto[pid] = cantidades_por_producto.get(pid, 0) + cantidad
 
         usuario_sistema = Usuario.objects.filter(id_usuario=1).first() or Usuario.objects.order_by('id_usuario').first()
         if usuario_sistema is None:
@@ -1022,27 +1263,11 @@ class CheckoutPublicoView(APIView):
 
         with transaction.atomic():
             cliente = cliente_autenticado
-
-            if not cliente:
-                cliente = Cliente.objects.filter(telefono=telefono).first() if telefono else None
-                if cliente is None:
-                    cliente = Cliente.objects.create(
-                        nombre_completo=nombre,
-                        telefono=telefono,
-                        ciudad=ciudad,
-                        direccion=direccion,
-                        es_top=False,
-                        estado='activo',
-                    )
-                else:
-                    cliente.nombre_completo = nombre
-                    cliente.ciudad = ciudad
-                    cliente.direccion = direccion
-                    cliente.save(update_fields=['nombre_completo', 'ciudad', 'direccion'])
-
-                if usuario_autenticado and extract_user_role_id(usuario_autenticado) == ROLE_CLIENTE and not cliente.id_usuario_fk_id:
-                    cliente.id_usuario_fk = usuario_autenticado
-                    cliente.save(update_fields=['id_usuario_fk'])
+            cliente.nombre_completo = nombre
+            cliente.telefono = telefono
+            cliente.ciudad = ciudad
+            cliente.direccion = direccion
+            cliente.save(update_fields=['nombre_completo', 'telefono', 'ciudad', 'direccion'])
 
             venta = Venta.objects.create(
                 id_cliente=cliente,
@@ -1055,36 +1280,32 @@ class CheckoutPublicoView(APIView):
                 imagen_qr_url=imagen_qr_url,
             )
 
-            for item in carrito:
-                id_producto = item.get('id_producto') or item.get('id')
-
-                try:
-                    cantidad = int(item.get('cantidad', 0))
-                except (TypeError, ValueError):
-                    return Response({'detail': 'Cantidad invalida en carrito.'}, status=status.HTTP_400_BAD_REQUEST)
-
-                if not id_producto or cantidad <= 0:
-                    return Response({'detail': 'Cada item del carrito requiere id_producto y cantidad > 0.'}, status=status.HTTP_400_BAD_REQUEST)
-
-                producto = Producto.objects.select_for_update().filter(id_producto=id_producto).first()
+            for pid, cantidad_total in cantidades_por_producto.items():
+                producto = Producto.objects.select_for_update().filter(id_producto=pid).first()
                 if producto is None:
-                    return Response({'detail': f'Producto no encontrado: {id_producto}.'}, status=status.HTTP_404_NOT_FOUND)
+                    return Response({'detail': f'Producto no encontrado: {pid}.'}, status=status.HTTP_404_NOT_FOUND)
+
+                if (producto.estado or '').strip().lower() != 'activo':
+                    return Response(
+                        {'detail': f'El producto "{producto.nombre}" no esta disponible.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
 
                 inventario = Inventario.objects.select_for_update().filter(id_producto=producto).first()
                 stock_disponible = int(inventario.stock_actual) if inventario else 0
-                if cantidad > stock_disponible:
+                if cantidad_total > stock_disponible:
                     return Response(
                         {'detail': f'Stock insuficiente para {producto.nombre}. Disponible: {stock_disponible}.'},
                         status=status.HTTP_400_BAD_REQUEST,
                     )
 
                 precio_unitario = Decimal(str(producto.precio_venta))
-                subtotal = precio_unitario * cantidad
+                subtotal = precio_unitario * cantidad_total
 
                 DetalleVenta.objects.create(
                     id_venta=venta,
                     id_producto=producto,
-                    cantidad=cantidad,
+                    cantidad=cantidad_total,
                     precio_unitario=precio_unitario,
                     subtotal=subtotal,
                 )
@@ -1093,7 +1314,7 @@ class CheckoutPublicoView(APIView):
                     id_producto=producto,
                     id_usuario=usuario_sistema,
                     tipo_movimiento='salida',
-                    cantidad=cantidad,
+                    cantidad=cantidad_total,
                     motivo='Venta web publica (pendiente validacion)',
                 )
 
