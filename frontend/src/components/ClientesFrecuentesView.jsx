@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import ExportReportButtons from './ExportReportButtons';
 import api from '../utils/api';
+import { downloadCsv, exportTablePdf } from '../utils/exportReport';
 
 const CLIENTES_TOP_URL = '/api/reportes/clientes-frecuentes/';
 const CLIENTES_URL = '/api/clientes/';
@@ -54,17 +56,33 @@ export default function ClientesFrecuentesView() {
     }
   };
 
+  const exportHeaders = ['Cliente', 'Telefono', 'Compras', 'Monto', 'Categoria', 'TOP'];
+  const exportRows = useMemo(
+    () => items.map((c) => [
+      c.nombre_completo || '',
+      c.telefono || '',
+      c.num_compras ?? '',
+      currency(c.monto_acumulado),
+      c.categoria || '',
+      c.es_top ? 'Si' : 'No',
+    ]),
+    [items],
+  );
+
   const exportarCsv = () => {
-    const headers = ['id', 'nombre', 'telefono', 'compras', 'monto', 'categoria', 'es_top'];
-    const rows = items.map((c) => [c.id_cliente, c.nombre_completo, c.telefono, c.num_compras, c.monto_acumulado, c.categoria, c.es_top]);
-    const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'clientes_frecuentes.csv';
-    a.click();
-    URL.revokeObjectURL(url);
+    if (!items.length) return;
+    downloadCsv('clientes_frecuentes.csv', exportHeaders, exportRows);
+  };
+
+  const exportarPdf = () => {
+    if (!items.length) return;
+    exportTablePdf({
+      title: 'Clientes frecuentes',
+      subtitle: `Ultimos ${dias} dias`,
+      filename: 'clientes_frecuentes.pdf',
+      headers: exportHeaders,
+      rows: exportRows,
+    });
   };
 
   return (
@@ -81,7 +99,11 @@ export default function ClientesFrecuentesView() {
               <option value={90}>Ultimos 90 dias</option>
               <option value={180}>Ultimos 180 dias</option>
             </select>
-            <button type="button" onClick={exportarCsv} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold">CSV</button>
+            <ExportReportButtons
+              disabled={!items.length}
+              onExportCsv={exportarCsv}
+              onExportPdf={exportarPdf}
+            />
           </div>
         </header>
 

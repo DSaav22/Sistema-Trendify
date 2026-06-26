@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import ExportReportButtons from './ExportReportButtons';
 import api from '../utils/api';
+import { downloadCsv, exportTablePdf } from '../utils/exportReport';
 
 const TOP_URL = '/api/reportes/productos-top/';
 const CATEGORIAS_URL = '/api/categorias/';
@@ -53,26 +55,45 @@ export default function ProductosTopView() {
     cargar();
   }, [criterio, periodo, idCategoria, idMarca]);
 
+  const exportHeaders = ['#', 'Producto', 'Categoria', 'Marca', 'Unidades', 'Ingresos', '% periodo'];
+  const exportRows = useMemo(
+    () => items.map((it, idx) => [
+      idx + 1,
+      it.nombre || '',
+      it.categoria || '',
+      it.marca || '',
+      it.total_unidades ?? '',
+      currency(it.ingresos_generados),
+      `${it.porcentaje_periodo ?? 0}%`,
+    ]),
+    [items],
+  );
+
+  const exportSubtitle = useMemo(() => {
+    const cat = categorias.find((c) => String(c.id_categoria) === String(idCategoria));
+    const mar = marcas.find((m) => String(m.id_marca) === String(idMarca));
+    return [
+      `Periodo: ${periodo}`,
+      `Criterio: ${criterio === 'ingresos' ? 'Ingresos' : 'Unidades'}`,
+      cat ? `Categoria: ${cat.nombre}` : 'Todas las categorias',
+      mar ? `Marca: ${mar.nombre}` : 'Todas las marcas',
+    ].join(' | ');
+  }, [periodo, criterio, idCategoria, idMarca, categorias, marcas]);
+
   const exportarCsv = () => {
     if (!items.length) return;
-    const headers = ['id_producto', 'nombre', 'categoria', 'marca', 'unidades', 'ingresos', 'porcentaje'];
-    const rows = items.map((it) => [
-      it.id_producto,
-      `"${(it.nombre || '').replace(/"/g, '""')}"`,
-      it.categoria,
-      it.marca,
-      it.total_unidades,
-      it.ingresos_generados,
-      it.porcentaje_periodo,
-    ]);
-    const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'productos_top.csv';
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadCsv('productos_top.csv', exportHeaders, exportRows);
+  };
+
+  const exportarPdf = () => {
+    if (!items.length) return;
+    exportTablePdf({
+      title: 'Productos mas vendidos',
+      subtitle: exportSubtitle,
+      filename: 'productos_top.pdf',
+      headers: exportHeaders,
+      rows: exportRows,
+    });
   };
 
   return (
@@ -83,9 +104,11 @@ export default function ProductosTopView() {
             <h2 className="text-2xl font-bold text-slate-800">Productos mas vendidos</h2>
             <p className="mt-1 text-sm text-slate-500">Ranking por unidades o ingresos (CU22).</p>
           </div>
-          <button type="button" onClick={exportarCsv} disabled={!items.length} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
-            Exportar CSV
-          </button>
+          <ExportReportButtons
+            disabled={!items.length}
+            onExportCsv={exportarCsv}
+            onExportPdf={exportarPdf}
+          />
         </header>
 
         <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">

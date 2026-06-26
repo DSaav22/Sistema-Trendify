@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 
+import ExportReportButtons from './ExportReportButtons';
 import api from '../utils/api';
+import { exportTablePdf } from '../utils/exportReport';
 
 const BITACORA_URL = '/api/bitacora/';
 const USUARIOS_DISPONIBLES_URL = '/api/bitacora/usuarios-disponibles/';
@@ -182,6 +184,72 @@ export default function BitacoraManager() {
     }
   };
 
+  const fetchTodosLosLogs = async () => {
+    const pageSizeExport = 200;
+    let page = 1;
+    let total = Infinity;
+    const acumulado = [];
+
+    while (acumulado.length < total) {
+      const queryParams = { page, page_size: pageSizeExport };
+      Object.entries(filtrosAplicados).forEach(([key, value]) => {
+        if (value) queryParams[key] = value;
+      });
+
+      const { data } = await api.get(BITACORA_URL, { params: queryParams });
+      const batch = Array.isArray(data) ? data : (Array.isArray(data?.results) ? data.results : []);
+      total = Array.isArray(data) ? batch.length : Number(data?.count ?? batch.length);
+      acumulado.push(...batch);
+      if (batch.length < pageSizeExport) break;
+      page += 1;
+    }
+
+    return acumulado;
+  };
+
+  const exportSubtitle = useMemo(() => {
+    const partes = [];
+    if (filtrosAplicados.fecha_inicio) partes.push(`Desde: ${filtrosAplicados.fecha_inicio}`);
+    if (filtrosAplicados.fecha_fin) partes.push(`Hasta: ${filtrosAplicados.fecha_fin}`);
+    if (filtrosAplicados.accion) partes.push(`Accion: ${filtrosAplicados.accion}`);
+    if (filtrosAplicados.tabla_afectada) partes.push(`Tabla: ${filtrosAplicados.tabla_afectada}`);
+    if (filtrosAplicados.q) partes.push(`Busqueda: ${filtrosAplicados.q}`);
+    return partes.length ? partes.join(' | ') : 'Sin filtros aplicados';
+  }, [filtrosAplicados]);
+
+  const exportarPDF = async () => {
+    try {
+      const todos = await fetchTodosLosLogs();
+      if (!todos.length) {
+        setError('No hay registros para exportar con los filtros actuales.');
+        return;
+      }
+
+      const headers = ['Fecha', 'Usuario', 'Accion', 'Tabla', 'ID Reg.', 'Detalle', 'IP'];
+      const rows = todos.map((log) => [
+        formatDate(log.fecha_hora),
+        log.usuario_nombre || log.id_usuario || '-',
+        log.accion || '-',
+        log.tabla_afectada || '-',
+        log.registro_afectado_id ?? '-',
+        (log.detalle || '-').slice(0, 120),
+        log.direccion_ip || '-',
+      ]);
+
+      exportTablePdf({
+        title: 'Bitacora del Sistema',
+        subtitle: exportSubtitle,
+        filename: `bitacora_${new Date().toISOString().slice(0, 10)}.pdf`,
+        headers,
+        rows,
+        orientation: 'landscape',
+      });
+    } catch (err) {
+      console.error('Error exportando PDF:', err);
+      setError('No se pudo exportar la bitacora a PDF.');
+    }
+  };
+
   const handleFiltroChange = (campo) => (event) => {
     setFiltros((prev) => ({ ...prev, [campo]: event.target.value }));
   };
@@ -207,12 +275,11 @@ export default function BitacoraManager() {
               </svg>
               Refrescar
             </button>
-            <button
-              onClick={exportarCSV}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-700"
-            >
-              Exportar CSV
-            </button>
+            <ExportReportButtons
+              disabled={loading}
+              onExportCsv={exportarCSV}
+              onExportPdf={exportarPDF}
+            />
           </div>
         </header>
 

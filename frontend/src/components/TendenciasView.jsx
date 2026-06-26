@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import ExportReportButtons from './ExportReportButtons';
 import api from '../utils/api';
+import { downloadCsv, exportTablePdf } from '../utils/exportReport';
 
 const TENDENCIAS_URL = '/api/reportes/tendencias/';
 
@@ -37,19 +39,37 @@ export default function TendenciasView() {
     cargar();
   }, [dimension, periodo]);
 
-  const exportarResumen = () => {
-    const lineas = ['dimension,periodo,nombre,ultimo_monto,variacion_pct'];
-    series.forEach((s) => {
+  const dimensionLabel = { categoria: 'Categoria', marca: 'Marca', ciudad: 'Ciudad' }[dimension] || dimension;
+  const periodoLabel = { mes: 'Ultimos 6 meses', trimestre: 'Trimestre', anual: 'Anual' }[periodo] || periodo;
+
+  const exportHeaders = [dimensionLabel, 'Ultimo monto', 'Variacion %'];
+  const exportRows = useMemo(
+    () => series.map((s) => {
       const ultimo = s.puntos?.[s.puntos.length - 1];
-      lineas.push([dimension, periodo, `"${s.nombre}"`, ultimo?.monto || 0, s.variacion_ultimo_pct].join(','));
+      const variacion = Number(s.variacion_ultimo_pct || 0);
+      return [
+        s.nombre || '',
+        currency(ultimo?.monto || 0),
+        `${variacion >= 0 ? '+' : ''}${variacion}%`,
+      ];
+    }),
+    [series],
+  );
+
+  const exportarCsv = () => {
+    if (!series.length) return;
+    downloadCsv('tendencias_resumen.csv', exportHeaders, exportRows);
+  };
+
+  const exportarPdf = () => {
+    if (!series.length) return;
+    exportTablePdf({
+      title: 'Tendencias de venta',
+      subtitle: `Por ${dimensionLabel.toLowerCase()} — ${periodoLabel}`,
+      filename: 'tendencias_resumen.pdf',
+      headers: exportHeaders,
+      rows: exportRows,
     });
-    const blob = new Blob([lineas.join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'tendencias_resumen.csv';
-    a.click();
-    URL.revokeObjectURL(url);
   };
 
   return (
@@ -60,7 +80,11 @@ export default function TendenciasView() {
             <h2 className="text-2xl font-bold text-slate-800">Tendencias de venta</h2>
             <p className="mt-1 text-sm text-slate-500">Comparacion por categoria, marca o ciudad (CU26).</p>
           </div>
-          <button type="button" onClick={exportarResumen} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold">Exportar resumen</button>
+          <ExportReportButtons
+            disabled={!series.length}
+            onExportCsv={exportarCsv}
+            onExportPdf={exportarPdf}
+          />
         </header>
 
         <div className="mb-4 flex flex-wrap gap-2">

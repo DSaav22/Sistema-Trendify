@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 
 import api from '../utils/api';
+import { evaluatePasswordRules, validatePassword } from '../utils/passwordValidation';
 import { useAuth } from '../context/AuthContext';
 import UserAvatar from './UserAvatar';
 
@@ -41,6 +42,11 @@ export default function Perfil() {
 
   const roleId = useMemo(() => extractRoleId(user), [user]);
   const roleLabel = ROLE_LABELS[roleId] || user?.id_rol?.nombre_rol || 'Usuario';
+  const passwordChecks = useMemo(
+    () => evaluatePasswordRules(formData.password_nuevo),
+    [formData.password_nuevo],
+  );
+  const passwordValida = passwordChecks.every((rule) => rule.ok);
 
   const handleChange = (event) => {
     const { name, value } = event.target;
@@ -57,6 +63,12 @@ export default function Perfil() {
 
     if (!formData.password_actual || !formData.password_nuevo) {
       setError('Completa ambos campos de contrasena.');
+      return;
+    }
+
+    const validacion = validatePassword(formData.password_nuevo);
+    if (!validacion.valid) {
+      setError(validacion.message);
       return;
     }
 
@@ -135,13 +147,30 @@ export default function Perfil() {
 
             <label className="block">
               <span className="text-sm font-medium text-slate-700">Nueva contrasena</span>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Debe incluir mayusculas, minusculas, numeros y un simbolo. No se permiten contrasenas solo numericas.
+              </p>
               <input
                 type="password"
                 name="password_nuevo"
                 value={formData.password_nuevo}
                 onChange={handleChange}
+                minLength={8}
+                autoComplete="new-password"
                 className="mt-1 w-full rounded-lg border border-slate-300 px-4 py-2.5 outline-none transition focus:ring-2 focus:ring-slate-800"
               />
+              {formData.password_nuevo.length > 0 && (
+                <ul className="mt-2 space-y-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+                  {passwordChecks.map((rule) => (
+                    <li
+                      key={rule.id}
+                      className={rule.ok ? 'text-emerald-700' : 'text-slate-500'}
+                    >
+                      {rule.ok ? '✓' : '○'} {rule.label}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </label>
 
             {error && (
@@ -154,7 +183,7 @@ export default function Perfil() {
 
             <button
               type="submit"
-              disabled={saving}
+              disabled={saving || (formData.password_nuevo.length > 0 && !passwordValida)}
               className="w-full rounded-lg bg-slate-900 px-4 py-2.5 font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {saving ? 'Guardando...' : 'Cambiar contrasena'}
