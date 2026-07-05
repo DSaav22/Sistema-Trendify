@@ -227,6 +227,27 @@ class Venta(models.Model):
         managed = False
 
 
+class Envio(models.Model):
+    id_envio = models.AutoField(primary_key=True)
+    id_venta = models.OneToOneField(
+        Venta,
+        on_delete=models.CASCADE,
+        db_column='id_venta',
+        related_name='envio',
+    )
+    tipo_envio = models.CharField(max_length=30)
+    empresa_transporte = models.CharField(max_length=100, blank=True, null=True)
+    estado_envio = models.CharField(max_length=20)
+
+    def __str__(self):
+        return f'Envio #{self.id_envio} - Venta #{self.id_venta_id}'
+
+    class Meta:
+        db_table = 'envios'
+        verbose_name_plural = 'Envios'
+        managed = False
+
+
 class DetalleVenta(models.Model):
     id_detalle_venta = models.AutoField(primary_key=True)
     id_venta = models.ForeignKey(

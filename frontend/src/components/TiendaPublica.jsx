@@ -13,6 +13,7 @@ const PUBLIC_CATEGORIAS_URL = '/api/public/categorias/';
 const PUBLIC_MARCAS_URL = '/api/public/marcas/';
 const PUBLIC_CHECKOUT_URL = '/api/public/checkout/';
 const MIS_PEDIDOS_URL = '/api/mis-pedidos/';
+const PUBLIC_RASTREO_URL = '/api/public/rastrear-pedido/';
 const MI_PERFIL_URL = '/api/mi-perfil-cliente/';
 const PEDIDOS_GUARDADOS_URL = '/api/pedidos-guardados/';
 const REGISTRO_URL = '/api/auth/registro/';
@@ -106,6 +107,11 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
   const [mostrarLogin, setMostrarLogin] = useState(false);
   const [mostrarRegistro, setMostrarRegistro] = useState(false);
   const [mostrarMisPedidos, setMostrarMisPedidos] = useState(false);
+  const [mostrarRastrearPedido, setMostrarRastrearPedido] = useState(false);
+  const [rastreoForm, setRastreoForm] = useState({ id_venta: '', telefono: '' });
+  const [rastreoResult, setRastreoResult] = useState(null);
+  const [rastreoError, setRastreoError] = useState('');
+  const [rastreoLoading, setRastreoLoading] = useState(false);
   const [productoDetalle, setProductoDetalle] = useState(null);
   const [ultimaVentaId, setUltimaVentaId] = useState(null);
   
@@ -588,6 +594,38 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
       }
   };
 
+  const handleConsultarRastreo = async (e) => {
+    e.preventDefault();
+    setRastreoError('');
+    setRastreoResult(null);
+    const idVenta = String(rastreoForm.id_venta || '').trim();
+    const telefono = sanitizeTelefono(rastreoForm.telefono);
+    if (!idVenta || !telefono) {
+      setRastreoError('Ingresa numero de pedido y telefono.');
+      return;
+    }
+    setRastreoLoading(true);
+    try {
+      const { data } = await api.get(PUBLIC_RASTREO_URL, {
+        params: { id_venta: idVenta, telefono },
+      });
+      setRastreoResult(data);
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      setRastreoError(typeof detail === 'string' ? detail : 'Pedido no encontrado.');
+    } finally {
+      setRastreoLoading(false);
+    }
+  };
+
+  const abrirRastreo = () => {
+    setRastreoForm({ id_venta: '', telefono: cliente.telefono || '' });
+    setRastreoResult(null);
+    setRastreoError('');
+    setMostrarRastrearPedido(true);
+    setMenuAbierto(false);
+  };
+
   return (
     <div className="min-h-screen relative bg-[radial-gradient(circle_at_10%_5%,rgba(190,242,100,0.2),transparent_30%),radial-gradient(circle_at_85%_12%,rgba(249,168,212,0.2),transparent_35%),linear-gradient(180deg,#f8fafc_0%,#fefce8_100%)] text-slate-900">
       <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/85 backdrop-blur-lg">
@@ -612,6 +650,7 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
                   Hola, {user?.username}
                 </span>
                 <button type="button" onClick={() => { setMostrarMisPedidos(true); setMenuAbierto(false); }} className="rounded-full border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-slate-400 w-full sm:w-auto mt-2 sm:mt-0">Mis Pedidos / Recibos</button>
+                <button type="button" onClick={abrirRastreo} className="rounded-full border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-semibold text-sky-800 transition hover:bg-sky-100 w-full sm:w-auto mt-2 sm:mt-0">Rastrear pedido</button>
                 <button type="button" onClick={() => { logout(); setMenuAbierto(false); }} className="rounded-full border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-50 w-full sm:w-auto mt-2 sm:mt-0">Salir</button>
                 </>
             ) : isAuthenticated ? (
@@ -621,6 +660,7 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
                 </>
             ) : (
                 <>
+                <button type="button" onClick={abrirRastreo} className="rounded-full border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-semibold text-sky-800 transition hover:bg-sky-100 w-full sm:w-auto mt-2 sm:mt-0">Rastrear pedido</button>
                 <button type="button" onClick={() => { setMostrarRegistro(true); setMenuAbierto(false); }} className="rounded-full bg-fuchsia-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-fuchsia-500 w-full sm:w-auto mt-2 sm:mt-0">Registrarse</button>
                 <button type="button" onClick={() => { setMostrarLogin(true); setMenuAbierto(false); }} className="rounded-full border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 w-full sm:w-auto mt-2 sm:mt-0">Iniciar Sesion</button>
                 <button type="button" onClick={onAccesoPersonal} className="rounded-full hidden lg:inline border border-fuchsia-200 bg-fuchsia-50 px-3 py-2 text-xs font-semibold text-fuchsia-800 transition hover:bg-fuchsia-100 w-full sm:w-auto mt-2 sm:mt-0">Staff</button>
@@ -843,6 +883,74 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
         )
         )}
       </main>
+
+      {/* MODAL RASTREAR PEDIDO — CU29 */}
+      {mostrarRastrearPedido && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 p-4">
+          <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-2xl font-black text-slate-900">Rastrear mi pedido</h3>
+                <p className="mt-1 text-sm text-slate-500">Ingresa el numero de pedido y tu telefono registrado.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMostrarRastrearPedido(false)}
+                className="rounded-full border border-slate-300 px-3 py-1 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                X
+              </button>
+            </div>
+
+            <form onSubmit={handleConsultarRastreo} className="mt-5 space-y-4">
+              <div>
+                <label className="text-xs font-bold uppercase text-slate-500">Numero de pedido</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={rastreoForm.id_venta}
+                  onChange={(e) => setRastreoForm((f) => ({ ...f, id_venta: e.target.value }))}
+                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                  placeholder="Ej. 1"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold uppercase text-slate-500">Telefono</label>
+                <input
+                  type="tel"
+                  value={rastreoForm.telefono}
+                  onChange={(e) => setRastreoForm((f) => ({ ...f, telefono: sanitizeTelefono(e.target.value) }))}
+                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                  placeholder="70010002"
+                />
+              </div>
+              {rastreoError && (
+                <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{rastreoError}</p>
+              )}
+              <button
+                type="submit"
+                disabled={rastreoLoading}
+                className="w-full rounded-xl bg-sky-600 px-4 py-3 text-sm font-bold text-white hover:bg-sky-700 disabled:opacity-60"
+              >
+                {rastreoLoading ? 'Consultando...' : 'Consultar estado'}
+              </button>
+            </form>
+
+            {rastreoResult && (
+              <div className="mt-5 rounded-2xl border border-sky-100 bg-sky-50 p-4">
+                <p className="text-xs font-bold uppercase tracking-wider text-sky-700">Pedido #{rastreoResult.id_venta}</p>
+                <p className="mt-2 text-xl font-black text-slate-900">{rastreoResult.estado_legible}</p>
+                {rastreoResult.tiene_envio && (
+                  <div className="mt-3 space-y-1 text-sm text-slate-700">
+                    <p><span className="font-semibold">Tipo:</span> {rastreoResult.tipo_envio || '-'}</p>
+                    <p><span className="font-semibold">Transportadora:</span> {rastreoResult.empresa_transporte || '-'}</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* MODAL MIS PEDIDOS */}
       {mostrarMisPedidos && (

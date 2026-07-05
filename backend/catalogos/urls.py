@@ -9,6 +9,7 @@ from .views import (
     CheckoutPublicoView,
     ClienteViewSet,
     CompraViewSet,
+    EnvioViewSet,
     InventarioViewSet,
     MarcaPublicaViewSet,
     MarcaViewSet,
@@ -19,6 +20,7 @@ from .views import (
     ProductoPublicoViewSet,
     ProductoViewSet,
     ProveedorViewSet,
+    PublicRastreoView,
     ReciboVentaView,
     RolViewSet,
     StripeWebhookView,
@@ -42,6 +44,7 @@ router.register(r'movimientos', MovimientoInventarioViewSet, basename='movimient
 router.register(r'bitacora', BitacoraViewSet, basename='bitacora')
 router.register(r'ventas', VentaViewSet, basename='venta')
 router.register(r'compras', CompraViewSet, basename='compra')
+router.register(r'envios', EnvioViewSet, basename='envio')
 
 public_router = DefaultRouter()
 public_router.register(r'categorias', CategoriaPublicaViewSet, basename='categoria-publica')
@@ -62,6 +65,7 @@ urlpatterns = [
     path('pedidos-guardados/<int:pk>/', PedidoGuardadoDetalleView.as_view(), name='pedido-guardado-detalle'),
     path('ventas/<int:pk>/recibo/', ReciboVentaView.as_view(), name='venta-recibo'),
     path('public/checkout/', CheckoutPublicoView.as_view(), name='checkout-publico'),
+    path('public/rastrear-pedido/', PublicRastreoView.as_view(), name='rastrear-pedido'),
     path('public/payments/webhook/stripe/', StripeWebhookView.as_view(), name='webhook-stripe'),
     path('public/', include(public_router.urls)),
     path('', include(router.urls)),

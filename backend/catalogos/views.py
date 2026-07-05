@@ -31,6 +31,7 @@ from .models import (
     DetalleCompra,
     DetallePedidoGuardado,
     DetalleVenta,
+    Envio,
     Inventario,
     Marca,
     MovimientoInventario,
@@ -48,6 +49,8 @@ from .serializers import (
     ClienteSerializer,
     CompraSerializer,
     DetalleVentaSerializer,
+    EnvioEstadoSerializer,
+    EnvioSerializer,
     InventarioSerializer,
     MarcaSerializer,
     MovimientoInventarioSerializer,
@@ -1570,3 +1573,140 @@ class StripeWebhookView(APIView):
             )
 
         return Response({'received': True}, status=status.HTTP_200_OK)
+
+
+def _normalizar_telefono_rastreo(valor):
+    return ''.join(c for c in str(valor or '') if c.isdigit())
+
+
+def _telefonos_coinciden_rastreo(telefono_cliente, telefono_ingresado):
+    a = _normalizar_telefono_rastreo(telefono_cliente)
+    b = _normalizar_telefono_rastreo(telefono_ingresado)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    if len(a) >= 8 and len(b) >= 8:
+        return a[-8:] == b[-8:]
+    return False
+
+
+class EnvioViewSet(BitacoraMixin, viewsets.ModelViewSet):
+    """CU27/CU28 — Gestionar y actualizar envios de pedidos."""
+    queryset = (
+        Envio.objects
+        .select_related('id_venta', 'id_venta__id_cliente')
+        .all()
+        .order_by('-id_envio')
+    )
+    serializer_class = EnvioSerializer
+    permission_classes = [IsAdminOrVendedorRole]
+    http_method_names = ['get', 'post', 'patch', 'head', 'options']
+
+    def get_serializer_class(self):
+        if self.action == 'partial_update':
+            return EnvioEstadoSerializer
+        return EnvioSerializer
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        estado = (self.request.query_params.get('estado') or '').strip().lower()
+        if estado:
+            qs = qs.filter(estado_envio__iexact=estado)
+        return qs
+
+    def destroy(self, request, *args, **kwargs):
+        return Response(
+            {'detail': 'Los envios no pueden eliminarse desde la API.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+    @action(detail=False, methods=['get'], url_path='ventas-elegibles')
+    def ventas_elegibles(self, request):
+        """Ventas completadas sin envio registrado (CU27)."""
+        ids_con_envio = Envio.objects.values_list('id_venta_id', flat=True)
+        ventas = (
+            Venta.objects
+            .filter(estado_venta__iexact='completada')
+            .exclude(id_venta__in=ids_con_envio)
+            .select_related('id_cliente')
+            .order_by('-fecha_hora')[:100]
+        )
+        data = [
+            {
+                'id_venta': v.id_venta,
+                'cliente_nombre': v.id_cliente.nombre_completo,
+                'cliente_telefono': v.id_cliente.telefono,
+                'monto_total': str(v.monto_total),
+                'fecha_hora': v.fecha_hora,
+                'metodo_pago': v.metodo_pago,
+            }
+            for v in ventas
+        ]
+        return Response(data)
+
+
+class PublicRastreoView(APIView):
+    """CU29 — Consulta publica de estado de pedido."""
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request, *args, **kwargs):
+        from .serializers import estado_envio_legible
+
+        id_venta_raw = request.query_params.get('id_venta') or request.query_params.get('id')
+        telefono = (request.query_params.get('telefono') or '').strip()
+
+        try:
+            id_venta = int(id_venta_raw)
+        except (TypeError, ValueError):
+            return Response(
+                {'detail': 'Pedido no encontrado.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not telefono:
+            return Response(
+                {'detail': 'Ingresa el telefono registrado en el pedido.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        venta = (
+            Venta.objects
+            .select_related('id_cliente')
+            .filter(id_venta=id_venta)
+            .first()
+        )
+        if venta is None:
+            return Response(
+                {'detail': 'Pedido no encontrado.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not _telefonos_coinciden_rastreo(venta.id_cliente.telefono, telefono):
+            return Response(
+                {'detail': 'Pedido no encontrado.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        envio = Envio.objects.filter(id_venta=venta).first()
+        if envio is None:
+            return Response({
+                'id_venta': venta.id_venta,
+                'tiene_envio': False,
+                'estado_venta': venta.estado_venta,
+                'estado_envio': None,
+                'estado_legible': 'Pedido confirmado — envio en preparacion',
+                'tipo_envio': None,
+                'empresa_transporte': None,
+            })
+
+        return Response({
+            'id_venta': venta.id_venta,
+            'tiene_envio': True,
+            'estado_venta': venta.estado_venta,
+            'estado_envio': envio.estado_envio,
+            'estado_legible': estado_envio_legible(envio.estado_envio),
+            'tipo_envio': envio.tipo_envio,
+            'empresa_transporte': envio.empresa_transporte,
+        })

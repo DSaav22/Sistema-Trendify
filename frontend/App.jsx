@@ -10,6 +10,7 @@ import UsuarioManager from './UsuarioManager';
 import RolManager from './RolManager';
 import CajaManager from './src/components/CajaManager';
 import PedidosOnlineManager from './src/components/PedidosOnlineManager';
+import EnviosManager from './src/components/EnviosManager';
 import BitacoraManager from './src/components/BitacoraManager';
 import ReportesDashboard from './src/components/ReportesDashboard';
 import ProductosTopView from './src/components/ProductosTopView';
@@ -39,6 +40,7 @@ const NAV_ITEMS = [
   { key: 'compras', label: 'Compras', icon: '📥', allowedRoles: [ROLE_ADMIN, ROLE_COMPRAS] },
   { key: 'caja', label: 'Caja / Ventas', icon: '🛒', allowedRoles: [ROLE_ADMIN, ROLE_VENDEDOR] },
   { key: 'pedidos_online', label: 'Pedidos Online', icon: '🛍️', allowedRoles: [ROLE_ADMIN, ROLE_VENDEDOR] },
+  { key: 'envios', label: 'Logistica / Envios', icon: '🚚', allowedRoles: [ROLE_ADMIN, ROLE_VENDEDOR] },
   { key: 'dashboard', label: 'Dashboard', icon: '📊', allowedRoles: [ROLE_ADMIN] },
   { key: 'productos_top', label: 'Productos Top', icon: '🏆', allowedRoles: [ROLE_ADMIN, ROLE_VENDEDOR] },
   { key: 'clientes_frecuentes', label: 'Clientes TOP', icon: '⭐', allowedRoles: [ROLE_ADMIN] },
@@ -146,6 +148,8 @@ export default function App() {
         return <CajaManager />;
       case 'pedidos_online':
         return <PedidosOnlineManager />;
+      case 'envios':
+        return <EnviosManager />;
       case 'dashboard':
         return <ReportesDashboard onNavigate={setActiveView} />;
       case 'productos_top':
