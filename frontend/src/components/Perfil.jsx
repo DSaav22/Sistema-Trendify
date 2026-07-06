@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import api from '../utils/api';
 import { evaluatePasswordRules, validatePassword } from '../utils/passwordValidation';
@@ -13,6 +13,7 @@ const ROLE_LABELS = {
   5: 'Auditor',
   6: 'Cliente',
 };
+const LOYALTY_CONFIG_URL = '/api/lealtad/config/';
 
 function extractRoleId(user) {
   if (!user) return null;
@@ -37,8 +38,12 @@ export default function Perfil() {
     password_nuevo: '',
   });
   const [saving, setSaving] = useState(false);
+  const [loyaltySaving, setLoyaltySaving] = useState(false);
+  const [loyaltyLoading, setLoyaltyLoading] = useState(false);
+  const [loyaltyError, setLoyaltyError] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [loyaltyConfig, setLoyaltyConfig] = useState(null);
 
   const roleId = useMemo(() => extractRoleId(user), [user]);
   const roleLabel = ROLE_LABELS[roleId] || user?.id_rol?.nombre_rol || 'Usuario';
@@ -47,6 +52,32 @@ export default function Perfil() {
     [formData.password_nuevo],
   );
   const passwordValida = passwordChecks.every((rule) => rule.ok);
+
+  useEffect(() => {
+    let active = true;
+    async function cargarLealtad() {
+      if (roleId !== 1) return;
+      setLoyaltyLoading(true);
+      setLoyaltyError('');
+      try {
+        const { data } = await api.get(LOYALTY_CONFIG_URL);
+        if (active) setLoyaltyConfig(data);
+      } catch (err) {
+        if (active) {
+          console.error('Error cargando configuracion de lealtad:', err);
+          setLoyaltyError('No se pudo cargar la configuracion del programa de lealtad.');
+        }
+      } finally {
+        if (active) {
+          setLoyaltyLoading(false);
+        }
+      }
+    }
+    cargarLealtad();
+    return () => {
+      active = false;
+    };
+  }, [roleId]);
 
   const handleChange = (event) => {
     const { name, value } = event.target;
@@ -89,6 +120,49 @@ export default function Perfil() {
       setError(err?.response?.data?.detail || 'No se pudo cambiar la contrasena.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleLoyaltyChange = (section, field, value, index = null) => {
+    setLoyaltyConfig((prev) => {
+      if (!prev) return prev;
+      if (section === 'points') {
+        return {
+          ...prev,
+          points: {
+            ...prev.points,
+            [field]: value,
+          },
+        };
+      }
+
+      if (section === 'dynamic_discounts' && index !== null) {
+        return {
+          ...prev,
+          dynamic_discounts: prev.dynamic_discounts.map((item, itemIndex) => (
+            itemIndex === index ? { ...item, [field]: value } : item
+          )),
+        };
+      }
+
+      return prev;
+    });
+  };
+
+  const guardarLealtad = async () => {
+    if (!loyaltyConfig) return;
+    setError('');
+    setSuccess('');
+    setLoyaltySaving(true);
+    try {
+      const { data } = await api.patch(LOYALTY_CONFIG_URL, loyaltyConfig);
+      setLoyaltyConfig(data);
+      setSuccess('Programa de lealtad actualizado correctamente.');
+    } catch (err) {
+      console.error('Error actualizando programa de lealtad:', err);
+      setError(err?.response?.data?.detail || 'No se pudo actualizar la configuracion de lealtad.');
+    } finally {
+      setLoyaltySaving(false);
     }
   };
 
@@ -191,6 +265,93 @@ export default function Perfil() {
           </form>
         </article>
       </div>
+
+      {roleId === 1 && (
+        <article className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-6 shadow-sm">
+          <header className="mb-4">
+            <h3 className="text-lg font-bold text-slate-800">Programa de lealtad</h3>
+            <p className="mt-1 text-sm text-slate-600">
+              Ajusta reglas de puntos y descuentos dinamicos que se aplican en tienda y caja.
+            </p>
+          </header>
+
+          {loyaltyLoading ? (
+            <p className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+              Cargando configuracion de lealtad...
+            </p>
+          ) : loyaltyError ? (
+            <div>
+              <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {loyaltyError}
+              </p>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="mt-4 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Reintentar
+              </button>
+            </div>
+          ) : loyaltyConfig ? (
+            <>
+              <div className="grid gap-4 lg:grid-cols-3">
+                <label className="block">
+                  <span className="text-sm font-medium text-slate-700">Monto por punto (BOB)</span>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={loyaltyConfig.points?.amount_per_point || '10.00'}
+                    onChange={(event) => handleLoyaltyChange('points', 'amount_per_point', event.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-300 px-4 py-2.5 outline-none transition focus:ring-2 focus:ring-amber-400"
+                  />
+                </label>
+
+                {loyaltyConfig.dynamic_discounts?.map((rule, index) => (
+                  <div key={`${rule.name}-${index}`} className="rounded-xl border border-slate-200 bg-white p-4">
+                    <p className="font-semibold text-slate-800">{rule.name}</p>
+                    <label className="mt-3 block">
+                      <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Minimo de compra</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={rule.min_amount}
+                        onChange={(event) => handleLoyaltyChange('dynamic_discounts', 'min_amount', event.target.value, index)}
+                        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+                      />
+                    </label>
+                    <label className="mt-3 block">
+                      <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Porcentaje</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={rule.percent}
+                        onChange={(event) => handleLoyaltyChange('dynamic_discounts', 'percent', event.target.value, index)}
+                        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+                      />
+                    </label>
+                  </div>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                onClick={guardarLealtad}
+                disabled={loyaltySaving}
+                className="mt-5 rounded-lg bg-amber-500 px-4 py-2.5 font-semibold text-slate-900 transition hover:bg-amber-400 disabled:opacity-60"
+              >
+                {loyaltySaving ? 'Guardando reglas...' : 'Guardar programa de lealtad'}
+              </button>
+            </>
+          ) : (
+            <p className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+              No hay configuracion de lealtad disponible todavia.
+            </p>
+          )}
+        </article>
+      )}
     </section>
   );
 }

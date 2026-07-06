@@ -21,6 +21,13 @@ from rest_framework.response import Response
 import stripe
 
 from .authentication import CustomJWTAuthentication
+from .loyalty import (
+    build_cliente_loyalty_summary,
+    calculate_dynamic_discount,
+    calculate_points_for_amount,
+    get_loyalty_config,
+    save_loyalty_config,
+)
 
 # Importa modelos y serializers de esta misma app.
 from .models import (
@@ -63,6 +70,7 @@ from .permissions import (
     IsAdminOrAuditorRole,
     IsAdminOrComprasRole,
     IsAdminOrVendedorRole,
+    IsAdminOrVendedorOrClienteRole,
     IsAdminRole,
     IsCatalogoReadRole,
     IsClienteRole,
@@ -92,6 +100,22 @@ def get_client_ip_from_request(request):
     if forwarded_for:
         return forwarded_for.split(',')[0].strip()
     return request.META.get('REMOTE_ADDR')
+
+
+def registrar_bitacora_evento(request, *, accion, tabla_afectada, registro_afectado_id=None, detalle=''):
+    usuario = getattr(request, 'user', None)
+    if usuario is None or not hasattr(usuario, 'id_usuario'):
+        return
+
+    Bitacora.objects.create(
+        id_usuario=usuario,
+        accion=accion,
+        tabla_afectada=tabla_afectada,
+        registro_afectado_id=registro_afectado_id,
+        detalle=detalle,
+        fecha_hora=timezone.now(),
+        direccion_ip=get_client_ip_from_request(request),
+    )
 
 
 def _estado_pago_desde_estado_venta(estado_venta):
@@ -224,6 +248,61 @@ def _build_frontend_checkout_urls(request, venta_id):
         f'{base_public}/?{success_qs}',
         f'{base_public}/?{cancel_qs}',
     )
+
+
+def _decimal_money(value):
+    try:
+        return Decimal(str(value or '0.00'))
+    except Exception:
+        return Decimal('0.00')
+
+
+def _calcular_preview_lealtad(cliente, carrito_items):
+    config = get_loyalty_config()
+    subtotal = Decimal('0.00')
+    cantidades_por_producto = {}
+
+    for item in carrito_items:
+        id_producto = item.get('id_producto') or item.get('id')
+        cantidad = int(item.get('cantidad') or 0)
+        if not id_producto or cantidad <= 0:
+            raise ValueError('Cada item del carrito requiere id_producto y cantidad > 0.')
+        cantidades_por_producto[int(id_producto)] = cantidades_por_producto.get(int(id_producto), 0) + cantidad
+
+    lineas = []
+    for pid, cantidad_total in cantidades_por_producto.items():
+        producto = Producto.objects.filter(id_producto=pid).first()
+        if producto is None:
+            raise ValueError(f'Producto no encontrado: {pid}.')
+        precio_unitario = _decimal_money(producto.precio_venta).quantize(Decimal('0.01'))
+        subtotal_linea = (precio_unitario * cantidad_total).quantize(Decimal('0.01'))
+        subtotal += subtotal_linea
+        lineas.append({
+            'id_producto': producto.id_producto,
+            'nombre': producto.nombre,
+            'cantidad': cantidad_total,
+            'precio_unitario': str(precio_unitario),
+            'subtotal': str(subtotal_linea),
+        })
+
+    discount = calculate_dynamic_discount(subtotal, config)
+    loyalty = build_cliente_loyalty_summary(cliente, projected_amount=discount['total'], config=config)
+    return {
+        'subtotal_bruto': discount['subtotal'],
+        'descuento': discount,
+        'total_final': discount['total'],
+        'lineas': lineas,
+        'resumen_lealtad': {
+            'puntos_actuales': loyalty['puntos_actuales'],
+            'puntos_proyectados_compra': loyalty['puntos_proyectados_compra'],
+            'puntos_despues_compra': loyalty['puntos_despues_compra'],
+            'nivel_actual': loyalty['nivel_actual'],
+            'nivel_proyectado': loyalty['nivel_proyectado'],
+            'siguiente_nivel': loyalty['siguiente_nivel'],
+            'faltan_para_siguiente_nivel': loyalty['faltan_para_siguiente_nivel'],
+        },
+        'reglas': config,
+    }
 
 
 def _revertir_stock_venta(venta, usuario_actual, motivo):
@@ -469,8 +548,94 @@ class MiPerfilClienteView(APIView):
             setattr(cliente, campo, valor)
         cliente.save(update_fields=list(campos.keys()))
 
+        cambios = ', '.join(
+            f"{campo}='{_resumir_valor_bitacora(valor)}'"
+            for campo, valor in campos.items()
+        )
+        registrar_bitacora_evento(
+            request,
+            accion='UPDATE',
+            tabla_afectada=cliente._meta.db_table,
+            registro_afectado_id=cliente.pk,
+            detalle=f'Cliente actualizo su perfil. Cambios: {cambios}.',
+        )
+
         serializer = ClienteSerializer(cliente)
         return Response(serializer.data)
+
+
+class MiLealtadView(APIView):
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsClienteRole]
+
+    def get(self, request):
+        cliente = Cliente.objects.filter(id_usuario_fk=request.user).first()
+        if not cliente:
+            return Response(
+                {'detail': 'No existe un cliente asociado a tu usuario.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        resumen = build_cliente_loyalty_summary(cliente)
+        return Response(resumen)
+
+
+class LoyaltyPreviewView(APIView):
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAdminOrVendedorOrClienteRole]
+
+    def post(self, request):
+        carrito = request.data.get('carrito') or []
+        role_id = extract_user_role_id(getattr(request, 'user', None))
+
+        if role_id == ROLE_CLIENTE:
+            cliente = Cliente.objects.filter(id_usuario_fk=request.user).first()
+            if cliente is None:
+                return Response(
+                    {'detail': 'No existe un cliente asociado a tu usuario.'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+        else:
+            id_cliente = request.data.get('id_cliente')
+            if not id_cliente:
+                return Response({'detail': 'id_cliente es obligatorio.'}, status=status.HTTP_400_BAD_REQUEST)
+            cliente = Cliente.objects.filter(id_cliente=id_cliente).first()
+            if cliente is None:
+                return Response({'detail': 'Cliente no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            preview = _calcular_preview_lealtad(cliente, carrito)
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(preview)
+
+
+class LoyaltyConfigView(APIView):
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAdminRole]
+
+    def get(self, request):
+        return Response(get_loyalty_config())
+
+    def patch(self, request):
+        current = get_loyalty_config()
+        merged = {
+            'points': request.data.get('points', current.get('points')),
+            'levels': request.data.get('levels', current.get('levels')),
+            'dynamic_discounts': request.data.get('dynamic_discounts', current.get('dynamic_discounts')),
+        }
+        config = save_loyalty_config(merged)
+        registrar_bitacora_evento(
+            request,
+            accion='UPDATE',
+            tabla_afectada='configuracion_lealtad',
+            registro_afectado_id=None,
+            detalle=(
+                'Se actualizo la configuracion del programa de lealtad. '
+                f"Puntos: {config.get('points', {}).get('amount_per_point')} BOB por punto. "
+                f"Reglas de descuento: {len(config.get('dynamic_discounts', []))}."
+            ),
+        )
+        return Response(config)
 
 
 class PedidosGuardadosView(APIView):
@@ -543,6 +708,17 @@ class PedidosGuardadosView(APIView):
                     cantidad=cantidad,
                 )
 
+        registrar_bitacora_evento(
+            request,
+            accion='INSERT',
+            tabla_afectada=pedido._meta.db_table,
+            registro_afectado_id=pedido.pk,
+            detalle=(
+                f'Se creo pedido guardado id={pedido.pk} ({pedido.nombre}) '
+                f'con {len(detalles_validados)} producto(s).'
+            ),
+        )
+
         output = PedidoGuardadoSerializer(
             PedidoGuardado.objects
             .prefetch_related('detalles_pedido_guardado__id_producto')
@@ -561,7 +737,15 @@ class PedidoGuardadoDetalleView(APIView):
 
         pedido = PedidoGuardado.objects.filter(id_cliente=cliente, pk=pk).first()
         if pedido:
+            pedido_nombre = pedido.nombre
             pedido.delete()
+            registrar_bitacora_evento(
+                request,
+                accion='DELETE',
+                tabla_afectada='pedidos_guardados',
+                registro_afectado_id=pk,
+                detalle=f'Se elimino pedido guardado id={pk} ({pedido_nombre}).',
+            )
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -872,8 +1056,10 @@ class VentaViewSet(BitacoraMixin, viewsets.ModelViewSet):
         numero_comprobante_in = (serializer.validated_data.get('numero_comprobante') or '').strip() or None
         imagen_qr_url_in = (serializer.validated_data.get('imagen_qr_url') or '').strip() or None
 
+        cliente_obj = serializer.validated_data['id_cliente']
         estado_venta = _estado_venta_pos_desde_metodo_pago(metodo_pago)
-        monto_total = Decimal('0.00')
+        subtotal_bruto = Decimal('0.00')
+        preview_lealtad = None
 
         with transaction.atomic():
             try:
@@ -881,8 +1067,24 @@ class VentaViewSet(BitacoraMixin, viewsets.ModelViewSet):
             except ValueError as exc:
                 return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
+            try:
+                preview_lealtad = _calcular_preview_lealtad(
+                    cliente_obj,
+                    [
+                        {
+                            'id_producto': detalle['id_producto'].pk,
+                            'cantidad': detalle['cantidad'],
+                        }
+                        for detalle in detalles
+                    ],
+                )
+            except ValueError as exc:
+                return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+            monto_total = _decimal_money(preview_lealtad['total_final'])
+
             venta = Venta.objects.create(
-                id_cliente=serializer.validated_data['id_cliente'],
+                id_cliente=cliente_obj,
                 id_usuario=usuario,
                 fecha_hora=timezone.now(),
                 monto_total=Decimal('0.00'),
@@ -897,6 +1099,7 @@ class VentaViewSet(BitacoraMixin, viewsets.ModelViewSet):
                 cantidad = int(detalle['cantidad'])
                 precio_unitario = Decimal(str(producto.precio_venta))
                 subtotal = precio_unitario * cantidad
+                subtotal_bruto += subtotal
 
                 DetalleVenta.objects.create(
                     id_venta=venta,
@@ -914,7 +1117,6 @@ class VentaViewSet(BitacoraMixin, viewsets.ModelViewSet):
                     motivo='Venta desde POS',
                 )
 
-                monto_total += subtotal
 
             # CU09 — validacion de pago segun metodo
             if metodo_pago == 'efectivo':
@@ -964,12 +1166,27 @@ class VentaViewSet(BitacoraMixin, viewsets.ModelViewSet):
             accion='INSERT',
             tabla_afectada=venta._meta.db_table,
             registro_afectado_id=venta.pk,
-            detalle=f'Se creo registro {venta._meta.model_name} con id={venta.pk} por {monto_total}.',
+            detalle=(
+                f'Se creo registro {venta._meta.model_name} con id={venta.pk} '
+                f'por {monto_total}. Subtotal bruto={subtotal_bruto}.'
+            ),
         )
 
-        output = self.get_serializer(venta)
-        headers = self.get_success_headers(output.data)
-        return Response(output.data, status=status.HTTP_201_CREATED, headers=headers)
+        output = self.get_serializer(venta).data
+        output['subtotal_bruto'] = str(subtotal_bruto.quantize(Decimal('0.01')))
+        output['descuento_aplicado'] = preview_lealtad['descuento'] if preview_lealtad else {}
+        output['resumen_lealtad'] = (
+            build_cliente_loyalty_summary(cliente_obj)
+            if estado_venta == 'completada'
+            else preview_lealtad['resumen_lealtad']
+        )
+        output['puntos_ganados'] = (
+            calculate_points_for_amount(monto_total)
+            if estado_venta == 'completada'
+            else 0
+        )
+        headers = self.get_success_headers(output)
+        return Response(output, status=status.HTTP_201_CREATED, headers=headers)
 
 
 class ReciboVentaView(APIView):
@@ -1013,7 +1230,14 @@ class ReciboVentaView(APIView):
             .order_by('id_detalle_venta')
         )
 
-        contexto = {'venta': venta, 'detalles': detalles}
+        subtotal_bruto = sum((_decimal_money(detalle.subtotal) for detalle in detalles), Decimal('0.00'))
+        descuento_total = max(subtotal_bruto - _decimal_money(venta.monto_total), Decimal('0.00'))
+        contexto = {
+            'venta': venta,
+            'detalles': detalles,
+            'subtotal_bruto': subtotal_bruto.quantize(Decimal('0.01')),
+            'descuento_total': descuento_total.quantize(Decimal('0.01')),
+        }
         html = render_to_string('recibos/recibo_venta.html', contexto)
 
         if formato == 'pdf':
@@ -1259,7 +1483,8 @@ class CheckoutPublicoView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        monto_total = Decimal('0.00')
+        subtotal_bruto = Decimal('0.00')
+        preview_lealtad = None
 
         with transaction.atomic():
             cliente = cliente_autenticado
@@ -1268,6 +1493,13 @@ class CheckoutPublicoView(APIView):
             cliente.ciudad = ciudad
             cliente.direccion = direccion
             cliente.save(update_fields=['nombre_completo', 'telefono', 'ciudad', 'direccion'])
+
+            try:
+                preview_lealtad = _calcular_preview_lealtad(cliente, carrito)
+            except ValueError as exc:
+                return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+            monto_total = _decimal_money(preview_lealtad['total_final'])
 
             venta = Venta.objects.create(
                 id_cliente=cliente,
@@ -1301,6 +1533,7 @@ class CheckoutPublicoView(APIView):
 
                 precio_unitario = Decimal(str(producto.precio_venta))
                 subtotal = precio_unitario * cantidad_total
+                subtotal_bruto += subtotal
 
                 DetalleVenta.objects.create(
                     id_venta=venta,
@@ -1317,8 +1550,6 @@ class CheckoutPublicoView(APIView):
                     cantidad=cantidad_total,
                     motivo='Venta web publica (pendiente validacion)',
                 )
-
-                monto_total += subtotal
 
             venta.monto_total = monto_total
             venta.save(update_fields=['monto_total'])
@@ -1347,15 +1578,17 @@ class CheckoutPublicoView(APIView):
                 actualizado_en=timezone.now(),
             )
 
-            # Bitacora del checkout publico (siempre contra usuario_sistema).
+            # Bitacora del checkout publico: registrar contra el cliente
+            # autenticado para que la auditoria refleje quien hizo el pedido.
+            usuario_bitacora = request.user if hasattr(request.user, 'id_usuario') else usuario_sistema
             Bitacora.objects.create(
-                id_usuario=usuario_sistema,
+                id_usuario=usuario_bitacora,
                 accion='CHECKOUT_PUBLICO',
                 tabla_afectada='ventas',
                 registro_afectado_id=venta.pk,
                 detalle=(
                     f'Pedido online #{venta.pk} de {cliente.nombre_completo} '
-                    f'por {monto_total} via {metodo_pago}'
+                    f'por {monto_total} via {metodo_pago}. Subtotal bruto={subtotal_bruto}.'
                     + (f' (comprobante {numero_comprobante})' if numero_comprobante else '')
                     + '. En espera de validacion.'
                 ),
@@ -1383,19 +1616,26 @@ class CheckoutPublicoView(APIView):
 
             stripe.api_key = stripe_secret
             success_url, cancel_url = _build_frontend_checkout_urls(request, venta.id_venta)
-            line_items = []
-            for detalle in DetalleVenta.objects.filter(id_venta=venta).select_related('id_producto'):
-                unit_amount = int((Decimal(str(detalle.precio_unitario)) * 100).quantize(Decimal('1')))
-                line_items.append(
-                    {
-                        'price_data': {
-                            'currency': stripe_currency,
-                            'product_data': {'name': detalle.id_producto.nombre},
-                            'unit_amount': unit_amount,
+            line_items = [
+                {
+                    'price_data': {
+                        'currency': stripe_currency,
+                        'product_data': {
+                            'name': f'Pedido Trendify #{venta.id_venta}',
+                            'description': (
+                                f'Subtotal {subtotal_bruto.quantize(Decimal("0.01"))} BOB'
+                                + (
+                                    f' con descuento de {preview_lealtad["descuento"]["discount_amount"]} BOB'
+                                    if preview_lealtad and preview_lealtad['descuento']['applied']
+                                    else ''
+                                )
+                            ),
                         },
-                        'quantity': int(detalle.cantidad),
-                    }
-                )
+                        'unit_amount': int((Decimal(str(venta.monto_total)) * 100).quantize(Decimal('1'))),
+                    },
+                    'quantity': 1,
+                }
+            ]
 
             try:
                 session = stripe.checkout.Session.create(
@@ -1434,7 +1674,10 @@ class CheckoutPublicoView(APIView):
                     'message': 'Pedido registrado. Redirigiendo a Stripe Checkout...',
                     'id_venta': venta.id_venta,
                     'monto_total': str(venta.monto_total),
+                    'subtotal_bruto': str(subtotal_bruto.quantize(Decimal('0.01'))),
                     'estado_venta': venta.estado_venta,
+                    'descuento_aplicado': preview_lealtad['descuento'] if preview_lealtad else {},
+                    'resumen_lealtad': preview_lealtad['resumen_lealtad'] if preview_lealtad else {},
                     'checkout_url': session.url,
                     'pasarela': 'stripe',
                 },
@@ -1446,7 +1689,11 @@ class CheckoutPublicoView(APIView):
                 'message': 'Pedido registrado. Esta pendiente de validacion por el equipo.',
                 'id_venta': venta.id_venta,
                 'monto_total': str(venta.monto_total),
+                'subtotal_bruto': str(subtotal_bruto.quantize(Decimal('0.01'))),
                 'estado_venta': venta.estado_venta,
+                'descuento_aplicado': preview_lealtad['descuento'] if preview_lealtad else {},
+                'resumen_lealtad': preview_lealtad['resumen_lealtad'] if preview_lealtad else {},
+                'puntos_ganados': 0,
             },
             status=status.HTTP_201_CREATED,
         )

@@ -69,6 +69,10 @@ class IsAdminOrVendedorRole(RoleBasedPermission):
     allowed_roles = (ROLE_ADMIN, ROLE_VENDEDOR)
 
 
+class IsAdminOrVendedorOrClienteRole(RoleBasedPermission):
+    allowed_roles = (ROLE_ADMIN, ROLE_VENDEDOR, ROLE_CLIENTE)
+
+
 class IsAdminOrBodegueroRole(RoleBasedPermission):
     allowed_roles = (ROLE_ADMIN, ROLE_BODEGUERO)
 

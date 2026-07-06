@@ -9,6 +9,7 @@ const CLIENTES_URL = '/api/clientes/';
 const PRODUCTOS_URL = '/api/productos/';
 const INVENTARIO_URL = '/api/inventario/';
 const VENTAS_URL = '/api/ventas/';
+const LOYALTY_PREVIEW_URL = '/api/lealtad/previsualizar/';
 
 function normalizeList(data) {
   if (Array.isArray(data)) return data;
@@ -83,17 +84,19 @@ export default function CajaManager() {
   const [cargandoVentas, setCargandoVentas] = useState(false);
   const [productoDetalle, setProductoDetalle] = useState(null);
   const [busquedaProducto, setBusquedaProducto] = useState('');
+  const [loyaltyPreview, setLoyaltyPreview] = useState(null);
 
   const totalVenta = useMemo(
     () => carrito.reduce((acc, item) => acc + item.cantidad * Number(item.precio_unitario), 0),
     [carrito]
   );
+  const totalVentaFinal = Number(loyaltyPreview?.total_final || totalVenta || 0);
 
   const vueltoCalculado = useMemo(() => {
     const recibido = Number(montoRecibido || 0);
-    if (!recibido || recibido < totalVenta) return 0;
-    return recibido - totalVenta;
-  }, [montoRecibido, totalVenta]);
+    if (!recibido || recibido < totalVentaFinal) return 0;
+    return recibido - totalVentaFinal;
+  }, [montoRecibido, totalVentaFinal]);
 
   const clienteSeleccionado = useMemo(
     () =>
@@ -164,6 +167,39 @@ export default function CajaManager() {
     cargarDatos();
     cargarVentasRecientes();
   }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    async function cargarPreviewLealtad() {
+      if (!idCliente || carrito.length === 0) {
+        setLoyaltyPreview(null);
+        return;
+      }
+
+      try {
+        const { data } = await api.post(LOYALTY_PREVIEW_URL, {
+          id_cliente: Number(idCliente),
+          carrito: carrito.map((item) => ({
+            id_producto: item.id_producto,
+            cantidad: item.cantidad,
+          })),
+        });
+        if (active) {
+          setLoyaltyPreview(data);
+        }
+      } catch (err) {
+        if (active) {
+          setLoyaltyPreview(null);
+        }
+      }
+    }
+
+    cargarPreviewLealtad();
+    return () => {
+      active = false;
+    };
+  }, [idCliente, carrito]);
 
   const agregarAlCarrito = (producto) => {
     setError('');
@@ -239,7 +275,7 @@ export default function CajaManager() {
       return;
     }
 
-    setMontoRecibido(metodoPago === 'efectivo' ? String(totalVenta.toFixed(2)) : '');
+    setMontoRecibido(metodoPago === 'efectivo' ? String(totalVentaFinal.toFixed(2)) : '');
     setNumeroComprobante('');
     setImagenQrUrl('');
     setShowPagoModal(true);
@@ -250,8 +286,8 @@ export default function CajaManager() {
 
     if (metodoPago === 'efectivo') {
       const recibido = Number(montoRecibido);
-      if (!Number.isFinite(recibido) || recibido < totalVenta) {
-        setError(`Monto recibido invalido. Debe ser >= ${formatCurrency(totalVenta)}.`);
+      if (!Number.isFinite(recibido) || recibido < totalVentaFinal) {
+        setError(`Monto recibido invalido. Debe ser >= ${formatCurrency(totalVentaFinal)}.`);
         return;
       }
     } else if (metodoPago === 'qr' || metodoPago === 'transferencia') {
@@ -287,7 +323,10 @@ export default function CajaManager() {
           ...data,
           cliente: clienteSeleccionado,
         });
-        setSuccess(`Venta #${data.id_venta} registrada correctamente.`);
+        setSuccess(
+          `Venta #${data.id_venta} registrada correctamente. `
+          + `Puntos ganados: ${data.puntos_ganados || 0}.`
+        );
       } else if (estado === 'pendiente_verificacion') {
         setSuccess(
           `Venta #${data.id_venta} registrada. El pago QR/transferencia queda pendiente de verificacion en Pedidos Online.`
@@ -445,7 +484,29 @@ export default function CajaManager() {
 
           <div className="mt-5 rounded-xl bg-slate-900 px-5 py-4 text-white">
             <p className="text-xs uppercase tracking-[0.22em] text-slate-300">Total</p>
-            <p className="mt-1 text-3xl font-bold">{formatCurrency(totalVenta)}</p>
+            {loyaltyPreview?.descuento?.applied && (
+              <div className="mt-2 rounded-lg bg-white/10 px-3 py-2 text-xs text-slate-100">
+                <p>Subtotal: {formatCurrency(loyaltyPreview.subtotal_bruto)}</p>
+                <p>
+                  Descuento {loyaltyPreview.descuento.percent}%:
+                  {' '}
+                  -{formatCurrency(loyaltyPreview.descuento.discount_amount)}
+                </p>
+              </div>
+            )}
+            <p className="mt-1 text-3xl font-bold">
+              {formatCurrency(loyaltyPreview?.total_final || totalVenta)}
+            </p>
+            {loyaltyPreview?.resumen_lealtad && (
+              <div className="mt-3 rounded-lg bg-emerald-500/15 px-3 py-2 text-xs text-emerald-100">
+                <p>
+                  Nivel actual: {loyaltyPreview.resumen_lealtad.nivel_actual?.name || 'Bronce'}
+                </p>
+                <p>
+                  Esta compra suma {loyaltyPreview.resumen_lealtad.puntos_proyectados_compra || 0} puntos.
+                </p>
+              </div>
+            )}
 
             <button
               type="button"
@@ -634,8 +695,15 @@ export default function CajaManager() {
             <h3 className="text-xl font-bold text-slate-800">Registrar pago</h3>
             <p className="mt-1 text-sm text-slate-500">
               Total a cobrar:{' '}
-              <span className="font-semibold text-slate-800">{formatCurrency(totalVenta)}</span>
+              <span className="font-semibold text-slate-800">
+                {formatCurrency(loyaltyPreview?.total_final || totalVenta)}
+              </span>
             </p>
+            {loyaltyPreview?.descuento?.applied && (
+              <p className="mt-1 text-xs text-emerald-700">
+                Descuento aplicado: {loyaltyPreview.descuento.name} (-{formatCurrency(loyaltyPreview.descuento.discount_amount)})
+              </p>
+            )}
 
             <div className="mt-5 space-y-4">
               <div>

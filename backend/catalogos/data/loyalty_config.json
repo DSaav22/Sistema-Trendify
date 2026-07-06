@@ -1,0 +1,47 @@
+{
+  "points": {
+    "enabled": true,
+    "amount_per_point": "10.00",
+    "label": "1 punto por cada 10 BOB en compras completadas."
+  },
+  "levels": [
+    {
+      "code": "bronce",
+      "name": "Bronce",
+      "min_points": 0,
+      "benefits": [
+        "Acceso al programa de lealtad"
+      ]
+    },
+    {
+      "code": "plata",
+      "name": "Plata",
+      "min_points": 200,
+      "benefits": [
+        "Atencion prioritaria",
+        "Promociones especiales"
+      ]
+    },
+    {
+      "code": "oro",
+      "name": "Oro",
+      "min_points": 500,
+      "benefits": [
+        "Promociones premium",
+        "Acceso prioritario a lanzamientos"
+      ]
+    }
+  ],
+  "dynamic_discounts": [
+    {
+      "name": "Compra mayor a 100 BOB",
+      "min_amount": "100.00",
+      "percent": "5.00"
+    },
+    {
+      "name": "Compra mayor a 200 BOB",
+      "min_amount": "200.00",
+      "percent": "10.00"
+    }
+  ]
+}

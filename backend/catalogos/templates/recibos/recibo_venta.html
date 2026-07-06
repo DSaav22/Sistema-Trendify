@@ -79,6 +79,16 @@
     </table>
 
     <table class="totales">
+        {% if descuento_total and descuento_total != 0 %}
+        <tr>
+            <td class="label">SUBTOTAL</td>
+            <td class="value">Bs {{ subtotal_bruto }}</td>
+        </tr>
+        <tr>
+            <td class="label">DESCUENTO LEALTAD</td>
+            <td class="value">- Bs {{ descuento_total }}</td>
+        </tr>
+        {% endif %}
         <tr class="total">
             <td class="label">TOTAL</td>
             <td class="value">Bs {{ venta.monto_total }}</td>

@@ -14,6 +14,8 @@ const PUBLIC_MARCAS_URL = '/api/public/marcas/';
 const PUBLIC_CHECKOUT_URL = '/api/public/checkout/';
 const MIS_PEDIDOS_URL = '/api/mis-pedidos/';
 const MI_PERFIL_URL = '/api/mi-perfil-cliente/';
+const MI_LEALTAD_URL = '/api/mi-lealtad/';
+const LOYALTY_PREVIEW_URL = '/api/lealtad/previsualizar/';
 const PEDIDOS_GUARDADOS_URL = '/api/pedidos-guardados/';
 const REGISTRO_URL = '/api/auth/registro/';
 const CARRITO_STORAGE_KEY = 'trendify.carrito.publico';
@@ -111,6 +113,8 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
   
   const [misPedidos, setMisPedidos] = useState([]);
   const [cargandoPedidos, setCargandoPedidos] = useState(false);
+  const [loyaltySummary, setLoyaltySummary] = useState(null);
+  const [loyaltyPreview, setLoyaltyPreview] = useState(null);
 
   const [registroForm, setRegistroForm] = useState({
       username: '', password: '', password_confirm: '', nombre_completo: '', telefono: '', ciudad: '', direccion: ''
@@ -173,6 +177,7 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
     () => carrito.reduce((acc, item) => acc + Number(item.precio_venta) * item.cantidad, 0),
     [carrito]
   );
+  const totalFinal = Number(loyaltyPreview?.total_final || total || 0);
 
   const productosFiltrados = useMemo(() => {
     return [...productos].sort((a, b) => {
@@ -248,9 +253,12 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
     if (!isClienteAutenticado) return;
 
     let active = true;
-    async function cargarPerfil() {
+    async function cargarPerfilYLealtad() {
       try {
-        const { data } = await api.get(MI_PERFIL_URL);
+        const [{ data }, { data: loyaltyData }] = await Promise.all([
+          api.get(MI_PERFIL_URL),
+          api.get(MI_LEALTAD_URL),
+        ]);
         if (!active || !data) return;
         setCliente({
           nombre: data.nombre_completo || '',
@@ -258,13 +266,46 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
           ciudad: data.ciudad || '',
           direccion: data.direccion || '',
         });
+        setLoyaltySummary(loyaltyData || null);
       } catch (error) {
-        console.error('Error cargando perfil cliente', error);
+        console.error('Error cargando perfil cliente/lealtad', error);
       }
     }
-    cargarPerfil();
+    cargarPerfilYLealtad();
     return () => { active = false; };
   }, [isClienteAutenticado]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function cargarPreviewLealtad() {
+      if (!isClienteAutenticado || carrito.length === 0) {
+        setLoyaltyPreview(null);
+        return;
+      }
+
+      try {
+        const { data } = await api.post(LOYALTY_PREVIEW_URL, {
+          carrito: carrito.map((item) => ({
+            id_producto: item.id_producto,
+            cantidad: item.cantidad,
+          })),
+        });
+        if (active) {
+          setLoyaltyPreview(data);
+        }
+      } catch (error) {
+        if (active) {
+          setLoyaltyPreview(null);
+        }
+      }
+    }
+
+    cargarPreviewLealtad();
+    return () => {
+      active = false;
+    };
+  }, [isClienteAutenticado, carrito]);
 
   useEffect(() => {
      if (isClienteAutenticado && mostrarMisPedidos) {
@@ -523,16 +564,25 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
       }
 
       setCheckoutSuccess(
-        `Pedido #${data.id_venta} registrado. Esta pendiente de validacion por el equipo.`
+        `Pedido #${data.id_venta} registrado. `
+        + `Descuento aplicado: ${currency(data?.descuento_aplicado?.discount_amount || 0)}. `
+        + `Puntos estimados al completarse: ${data?.resumen_lealtad?.puntos_proyectados_compra || 0}.`
       );
       setUltimaVentaId(data.id_venta || null);
       setCarrito([]);
+      setLoyaltyPreview(null);
       window.localStorage.removeItem(CARRITO_STORAGE_KEY);
       setNumeroComprobante('');
       setImagenComprobanteUrl('');
       setMetodoPago('qr');
       setCheckoutStep('carrito');
       setOpenCheckout(false);
+      try {
+        const { data: loyaltyData } = await api.get(MI_LEALTAD_URL);
+        setLoyaltySummary(loyaltyData || null);
+      } catch (innerError) {
+        console.error('No se pudo refrescar la lealtad del cliente', innerError);
+      }
     } catch (error) {
       setCheckoutError(error?.response?.data?.detail || 'No se pudo confirmar el pago.');
     } finally {
@@ -671,6 +721,47 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
             >
               Ver Mis Pedidos / Recibos
             </button>
+          </div>
+        )}
+
+        {isClienteAutenticado && loyaltySummary && (
+          <div className="mb-5 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+            <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-lime-50 p-4">
+              <p className="text-xs font-black uppercase tracking-[0.24em] text-amber-700">Programa de Lealtad</p>
+              <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <p className="text-3xl font-black text-slate-900">{loyaltySummary.puntos_actuales || 0}</p>
+                  <p className="text-sm text-slate-600">puntos acumulados</p>
+                </div>
+                <div className="rounded-full bg-slate-900 px-4 py-2 text-sm font-bold text-white">
+                  Nivel {loyaltySummary.nivel_actual?.name || 'Bronce'}
+                </div>
+              </div>
+              <p className="mt-3 text-sm text-slate-700">
+                {loyaltySummary.reglas?.points?.label || 'Acumula puntos con cada compra completada.'}
+              </p>
+              <p className="mt-2 text-sm text-slate-600">
+                {loyaltySummary.siguiente_nivel
+                  ? `Te faltan ${loyaltySummary.faltan_para_siguiente_nivel} puntos para llegar a ${loyaltySummary.siguiente_nivel.name}.`
+                  : 'Ya alcanzaste el nivel mas alto del programa.'}
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+              <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-700">Beneficios actuales</p>
+              <div className="mt-3 space-y-2 text-sm text-emerald-900">
+                {(loyaltySummary.nivel_actual?.benefits || []).length === 0 ? (
+                  <p>Aun no tienes beneficios adicionales configurados.</p>
+                ) : (
+                  (loyaltySummary.nivel_actual?.benefits || []).map((benefit) => (
+                    <p key={benefit}>- {benefit}</p>
+                  ))
+                )}
+                <p className="pt-2 text-emerald-800">
+                  Compras completadas: {loyaltySummary.compras_completadas || 0}
+                </p>
+              </div>
+            </div>
           </div>
         )}
 
@@ -1059,7 +1150,20 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
                 )}
                 <div className="mt-6 rounded-2xl bg-slate-900 px-5 py-5 text-white shadow-lg">
                   <p className="text-xs uppercase tracking-widest text-slate-400">Total a Pagar</p>
-                  <p className="mt-1 text-3xl sm:text-4xl font-black">{currency(total)}</p>
+                  {loyaltyPreview?.descuento?.applied && (
+                    <div className="mt-3 rounded-xl bg-white/10 px-4 py-3 text-xs text-slate-100">
+                      <p>Subtotal: {currency(loyaltyPreview.subtotal_bruto)}</p>
+                      <p>
+                        {loyaltyPreview.descuento.name}: -{currency(loyaltyPreview.descuento.discount_amount)}
+                      </p>
+                    </div>
+                  )}
+                  <p className="mt-1 text-3xl sm:text-4xl font-black">{currency(totalFinal)}</p>
+                  {loyaltyPreview?.resumen_lealtad && (
+                    <p className="mt-2 text-xs text-lime-200">
+                      Esta compra te acerca con {loyaltyPreview.resumen_lealtad.puntos_proyectados_compra || 0} puntos.
+                    </p>
+                  )}
                   <button onClick={irAPago} disabled={carrito.length === 0} className="mt-5 w-full rounded-xl bg-lime-400 px-4 py-3 text-sm font-black text-slate-900 transition hover:bg-lime-300 disabled:opacity-50 disabled:cursor-not-allowed">Proceder al Pago</button>
                 </div>
               </div>
@@ -1088,6 +1192,17 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
                 )}
 
                 <div className="mt-4 space-y-3">
+                  {loyaltyPreview?.descuento?.applied && (
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                      <p className="font-bold">Descuento automatico activo</p>
+                      <p className="mt-1">
+                        {loyaltyPreview.descuento.name}: -{currency(loyaltyPreview.descuento.discount_amount)}
+                      </p>
+                      <p className="mt-1">
+                        Total final: <strong>{currency(totalFinal)}</strong>
+                      </p>
+                    </div>
+                  )}
                   <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Metodo de pago</p>
                   <div className="grid grid-cols-1 gap-2">
                     {[

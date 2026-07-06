@@ -65,6 +65,9 @@ function PedidoDetalleModal({ venta, open, onClose }) {
 
   const detalles = venta.detalles_venta || [];
   const completada = (venta.estado_venta || '').toLowerCase() === 'completada';
+  const subtotalBruto = detalles.reduce((acc, det) => acc + Number(det.subtotal || 0), 0);
+  const totalFinal = Number(venta.monto_total || 0);
+  const descuentoTotal = Math.max(subtotalBruto - totalFinal, 0);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4" onClick={onClose}>
@@ -87,8 +90,25 @@ function PedidoDetalleModal({ venta, open, onClose }) {
             <p><span className="font-semibold text-slate-600">Metodo pago:</span> {venta.metodo_pago || '-'}</p>
             <p><span className="font-semibold text-slate-600">Estado:</span> {labelEstado(venta.estado_venta)}</p>
             <p><span className="font-semibold text-slate-600">Comprobante:</span> {venta.numero_comprobante || '-'}</p>
-            <p><span className="font-semibold text-slate-600">Total:</span> {formatCurrency(venta.monto_total)}</p>
+            {descuentoTotal > 0 ? (
+              <>
+                <p><span className="font-semibold text-slate-600">Subtotal:</span> {formatCurrency(subtotalBruto)}</p>
+                <p><span className="font-semibold text-slate-600">Descuento:</span> -{formatCurrency(descuentoTotal)}</p>
+                <p className="sm:col-span-2"><span className="font-semibold text-slate-600">Total final:</span> {formatCurrency(venta.monto_total)}</p>
+              </>
+            ) : (
+              <p><span className="font-semibold text-slate-600">Total:</span> {formatCurrency(venta.monto_total)}</p>
+            )}
           </div>
+
+          {descuentoTotal > 0 && (
+            <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+              <p className="font-bold">Descuento aplicado</p>
+              <p className="mt-1">
+                Este pedido tiene un descuento automatico de {formatCurrency(descuentoTotal)}.
+              </p>
+            </div>
+          )}
 
           <h4 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">Productos</h4>
           {detalles.length === 0 ? (

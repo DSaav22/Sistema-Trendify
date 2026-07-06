@@ -27,7 +27,10 @@ PY
 
 echo "Sincronizando migraciones Django..."
 # El schema SQL ya crea tablas de negocio; las tablas django_* requieren migrate real.
-python manage.py migrate contenttypes auth admin sessions
+python manage.py migrate contenttypes
+python manage.py migrate auth
+python manage.py migrate admin
+python manage.py migrate sessions
 python manage.py migrate catalogos --fake
 
 echo "Restableciendo contrasenas seed a 123456..."
