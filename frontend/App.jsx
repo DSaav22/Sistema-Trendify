@@ -24,71 +24,34 @@ import TiendaPublica from './src/components/TiendaPublica';
 import UserAvatar from './src/components/UserAvatar';
 import SessionExpiredModal from './src/components/SessionExpiredModal';
 import { useAuth } from './src/context/AuthContext';
-
-const ROLE_ADMIN = 1;
-const ROLE_VENDEDOR = 2;
-const ROLE_BODEGUERO = 3;
-const ROLE_COMPRAS = 4;
-const ROLE_AUDITOR = 5;
-const ROLE_CLIENTE = 6;
-
-const NAV_ITEMS = [
-  { key: 'categorias', label: 'Categorias', icon: '📂', allowedRoles: [ROLE_ADMIN] },
-  { key: 'clientes', label: 'Clientes', icon: '👥', allowedRoles: [ROLE_ADMIN, ROLE_VENDEDOR] },
-  { key: 'productos', label: 'Productos', icon: '🧴', allowedRoles: [ROLE_ADMIN, ROLE_VENDEDOR, ROLE_BODEGUERO, ROLE_COMPRAS] },
-  { key: 'proveedores', label: 'Proveedores', icon: '🏭', allowedRoles: [ROLE_ADMIN, ROLE_COMPRAS] },
-  { key: 'compras', label: 'Compras', icon: '📥', allowedRoles: [ROLE_ADMIN, ROLE_COMPRAS] },
-  { key: 'caja', label: 'Caja / Ventas', icon: '🛒', allowedRoles: [ROLE_ADMIN, ROLE_VENDEDOR] },
-  { key: 'pedidos_online', label: 'Pedidos Online', icon: '🛍️', allowedRoles: [ROLE_ADMIN, ROLE_VENDEDOR] },
-  { key: 'envios', label: 'Logistica / Envios', icon: '🚚', allowedRoles: [ROLE_ADMIN, ROLE_VENDEDOR] },
-  { key: 'dashboard', label: 'Dashboard', icon: '📊', allowedRoles: [ROLE_ADMIN] },
-  { key: 'productos_top', label: 'Productos Top', icon: '🏆', allowedRoles: [ROLE_ADMIN, ROLE_VENDEDOR] },
-  { key: 'clientes_frecuentes', label: 'Clientes TOP', icon: '⭐', allowedRoles: [ROLE_ADMIN] },
-  { key: 'alertas_predictivas', label: 'Alertas Stock', icon: '⚠️', allowedRoles: [ROLE_ADMIN] },
-  { key: 'tendencias', label: 'Tendencias', icon: '📈', allowedRoles: [ROLE_ADMIN] },
-  { key: 'inventario', label: 'Inventario', icon: '📦', allowedRoles: [ROLE_ADMIN, ROLE_VENDEDOR, ROLE_BODEGUERO, ROLE_COMPRAS] },
-  { key: 'usuarios', label: 'Usuarios', icon: '🧑‍💼', allowedRoles: [ROLE_ADMIN] },
-  { key: 'roles', label: 'Roles', icon: '🛡️', allowedRoles: [ROLE_ADMIN] },
-  { key: 'bitacora', label: 'Bitacora', icon: '📝', allowedRoles: [ROLE_ADMIN, ROLE_AUDITOR] },
-  { key: 'perfil', label: 'Mi Perfil', icon: '👤', allowedRoles: [ROLE_ADMIN, ROLE_VENDEDOR, ROLE_BODEGUERO, ROLE_COMPRAS, ROLE_AUDITOR] },
-];
+import { buildVisibleNavigation, PERFIL_NAV_ITEM } from './src/config/navConfig';
+import {
+  ROLE_ADMIN,
+  ROLE_CLIENTE,
+  ROLE_VENDEDOR,
+  ROLE_LABELS,
+  defaultViewForRole,
+  extractRoleId,
+} from './src/utils/roleUtils';
 
 export default function App() {
   const { user, isReady, isAuthenticated, logout, expireByInactivity } = useAuth();
-  const [activeView, setActiveView] = useState('inventario');
+  const [activeView, setActiveView] = useState('');
   const [publicView, setPublicView] = useState('store');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const userRolId = useMemo(() => {
-    if (!user) return null;
-    const roleCandidates = [
-      user?.id_rol?.id_rol,
-      user?.id_rol,
-      user?.rol?.id_rol,
-      user?.rol,
-      user?.role?.id_rol,
-      user?.role,
-      user?.role_id,
-      user?.idRol,
-    ];
+  const userRolId = useMemo(() => extractRoleId(user), [user]);
 
-    for (const roleValue of roleCandidates) {
-      const parsed = Number(roleValue);
-      if (Number.isFinite(parsed) && parsed > 0) {
-        return parsed;
-      }
-    }
+  const { sections: visibleSections, perfilVisible, flatItems: visibleNavItems } = useMemo(
+    () => buildVisibleNavigation(userRolId),
+    [userRolId],
+  );
 
-    return null;
-  }, [user]);
-
-  const visibleNavItems = useMemo(() => {
-    if (!userRolId) {
-      return [];
-    }
-
-    return NAV_ITEMS.filter((item) => item.allowedRoles.includes(userRolId));
-  }, [userRolId]);
+  const roleLabel = useMemo(() => {
+    if (user?.nombre_rol) return user.nombre_rol;
+    if (user?.id_rol?.nombre_rol) return user.id_rol.nombre_rol;
+    return ROLE_LABELS[userRolId] || 'Usuario';
+  }, [user, userRolId]);
 
   const allowedViewKeys = useMemo(() => {
     return new Set(visibleNavItems.map((item) => item.key));
@@ -98,30 +61,18 @@ export default function App() {
   useInactivityLogout(expireByInactivity, inactivityEnabled);
 
   const defaultAllowedView = useMemo(() => {
-    if (userRolId === ROLE_ADMIN && allowedViewKeys.has('dashboard')) {
-      return 'dashboard';
-    }
-
-    if (allowedViewKeys.has('inventario')) {
-      return 'inventario';
-    }
-
-    if (allowedViewKeys.has('caja')) {
-      return 'caja';
-    }
-
-    return visibleNavItems[0]?.key || null;
+    return defaultViewForRole(userRolId, allowedViewKeys) || visibleNavItems[0]?.key || null;
   }, [allowedViewKeys, visibleNavItems, userRolId]);
 
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (!isAuthenticated || !defaultAllowedView) {
       return;
     }
 
-    if (!allowedViewKeys.has(activeView) && defaultAllowedView) {
+    if (!allowedViewKeys.has(activeView)) {
       setActiveView(defaultAllowedView);
     }
-  }, [activeView, allowedViewKeys, defaultAllowedView, isAuthenticated]);
+  }, [activeView, allowedViewKeys, defaultAllowedView, isAuthenticated, user?.id_usuario]);
 
   const activeLabel = useMemo(() => {
     const item = visibleNavItems.find((n) => n.key === activeView);
@@ -129,6 +80,14 @@ export default function App() {
   }, [activeView, visibleNavItems]);
 
   const renderActiveView = () => {
+    if (!activeView) {
+      return (
+        <div className="flex min-h-[240px] items-center justify-center text-sm font-medium text-slate-500">
+          Cargando modulo...
+        </div>
+      );
+    }
+
     if (!allowedViewKeys.has(activeView)) {
       return <div className="p-10 text-center text-red-500 font-bold">Acceso Denegado</div>;
     }
@@ -215,47 +174,63 @@ export default function App() {
 
   const puedeUsarAsistente = userRolId === ROLE_ADMIN || userRolId === ROLE_VENDEDOR;
 
+  const renderNavButton = (item) => {
+    const isActive = activeView === item.key;
+    return (
+      <button
+        key={item.key}
+        type="button"
+        onClick={() => {
+          setActiveView(item.key);
+          setMobileMenuOpen(false);
+        }}
+        className={[
+          'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition',
+          isActive
+            ? 'bg-sky-500/20 text-white ring-1 ring-sky-400/40'
+            : 'text-slate-300 hover:bg-white/10 hover:text-white',
+        ].join(' ')}
+      >
+        <span className="text-lg" aria-hidden="true">
+          {item.icon}
+        </span>
+        <span className="text-sm font-medium">{item.label}</span>
+      </button>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900">
-      <div className="grid min-h-screen lg:grid-cols-[280px_1fr] lg:items-start">
-        <aside className={`fixed inset-y-0 left-0 z-40 w-72 transform overflow-y-auto bg-slate-900 px-5 py-6 text-slate-100 transition-transform duration-300 lg:sticky lg:top-0 lg:max-h-screen lg:w-auto lg:translate-x-0 ${mobileMenuOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'}`}>
+      <div className="grid min-h-screen lg:grid-cols-[280px_1fr] lg:items-stretch">
+        <aside
+          className={`fixed inset-y-0 left-0 z-40 flex w-72 flex-col bg-slate-900 text-slate-100 transition-transform duration-300 lg:sticky lg:top-0 lg:h-screen lg:w-auto lg:translate-x-0 ${mobileMenuOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'}`}
+        >
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(56,189,248,0.18),transparent_45%)]" />
-          <div className="relative">
-            <div className="mb-4 sm:mb-8 flex items-center justify-between">
+          <div className="relative flex min-h-0 flex-1 flex-col px-5 py-6">
+            <div className="mb-5 flex items-center justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.28em] text-sky-300">Cosmetics Suite</p>
                 <h1 className="mt-2 text-2xl font-bold leading-tight">Panel</h1>
+                <p className="mt-1 text-xs font-medium text-slate-400">{roleLabel}</p>
               </div>
-              <button 
-                type="button" 
-                className="lg:hidden p-2 text-slate-400 hover:text-white"
+              <button
+                type="button"
+                className="p-2 text-slate-400 hover:text-white lg:hidden"
                 onClick={() => setMobileMenuOpen(false)}
               >
                 ✕
               </button>
             </div>
 
-            <nav className="space-y-2 mt-4 sm:mt-0">
-              {visibleNavItems.map((item) => {
-                const isActive = activeView === item.key;
-                return (
-                  <button
-                    key={item.key}
-                    onClick={() => { setActiveView(item.key); setMobileMenuOpen(false); }}
-                    className={[
-                      'flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition',
-                      isActive
-                        ? 'bg-sky-500/20 text-white ring-1 ring-sky-400/40'
-                        : 'text-slate-300 hover:bg-white/10 hover:text-white',
-                    ].join(' ')}
-                  >
-                    <span className="text-lg" aria-hidden="true">
-                      {item.icon}
-                    </span>
-                    <span className="font-medium">{item.label}</span>
-                  </button>
-                );
-              })}
+            <nav className="min-h-0 flex-1 space-y-5 overflow-y-auto pr-1">
+              {visibleSections.map((section) => (
+                <div key={section.id}>
+                  <p className="mb-2 px-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    {section.title}
+                  </p>
+                  <div className="space-y-1">{section.items.map((item) => renderNavButton(item))}</div>
+                </div>
+              ))}
 
               {visibleNavItems.length === 0 && (
                 <div className="rounded-xl border border-red-300 bg-red-500/10 px-3 py-3 text-sm font-semibold text-red-100">
@@ -263,6 +238,12 @@ export default function App() {
                 </div>
               )}
             </nav>
+
+            {perfilVisible && (
+              <div className="mt-4 border-t border-slate-700/80 pt-4">
+                {renderNavButton(PERFIL_NAV_ITEM)}
+              </div>
+            )}
           </div>
         </aside>
 

@@ -279,6 +279,13 @@ class LoginView(APIView):
                 'id_usuario': usuario.id_usuario,
                 'username': usuario.username,
                 'id_rol': usuario.id_rol_id,
+                'nombre_rol': getattr(usuario.id_rol, 'nombre_rol', None),
+                'usuario': {
+                    'id_usuario': usuario.id_usuario,
+                    'username': usuario.username,
+                    'id_rol': usuario.id_rol_id,
+                    'nombre_rol': getattr(usuario.id_rol, 'nombre_rol', None),
+                },
             },
             status=status.HTTP_200_OK,
         )

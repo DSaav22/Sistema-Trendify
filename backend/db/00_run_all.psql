@@ -22,6 +22,8 @@ BEGIN;
 \i 08_migracion_pedidos_guardados.sql
 \i 09_migracion_pago_transacciones.sql
 \i 10_migracion_backfill_clientes_usuario.sql
+\i 11_migracion_envios_ciclo5.sql
+\i 12_seed_extension.sql
 
 COMMIT;
 
@@ -41,4 +43,6 @@ UNION ALL SELECT 'ventas', COUNT(*) FROM ventas
 UNION ALL SELECT 'detalles_venta', COUNT(*) FROM detalles_venta
 UNION ALL SELECT 'envios', COUNT(*) FROM envios
 UNION ALL SELECT 'bitacora', COUNT(*) FROM bitacora
+UNION ALL SELECT 'pedidos_guardados', COUNT(*) FROM pedidos_guardados
+UNION ALL SELECT 'pagos_transacciones', COUNT(*) FROM pagos_transacciones
 ORDER BY tabla;

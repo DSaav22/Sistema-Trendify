@@ -4,6 +4,9 @@
 -- ============================================================
 
 -- Limpieza para re-ejecuciones
+DROP TABLE IF EXISTS detalles_pedido_guardado CASCADE;
+DROP TABLE IF EXISTS pedidos_guardados CASCADE;
+DROP TABLE IF EXISTS pagos_transacciones CASCADE;
 DROP TABLE IF EXISTS bitacora CASCADE;
 DROP TABLE IF EXISTS envios CASCADE;
 DROP TABLE IF EXISTS detalles_venta CASCADE;
@@ -227,6 +230,10 @@ CREATE TABLE envios (
     tipo_envio VARCHAR(30) NOT NULL,
     empresa_transporte VARCHAR(100),
     estado_envio VARCHAR(20) NOT NULL,
+    costo_envio NUMERIC(10,2),
+    repartidor VARCHAR(100),
+    codigo_recepcion VARCHAR(10),
+    recepcion_confirmada BOOLEAN NOT NULL DEFAULT FALSE,
     CONSTRAINT fk_envios_ventas
         FOREIGN KEY (id_venta) REFERENCES ventas(id_venta)
         ON UPDATE CASCADE

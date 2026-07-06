@@ -1,8 +1,18 @@
 -- ============================================================
 -- 03_seed.sql
--- Datos demo Trendify — catalogo, ventas, reportes y tienda online
--- Password de todos los usuarios: 123456
--- Generado con backend/scripts/generar_seed_demo.py
+-- Datos demo Trendify — Ciclos 1-5 (catalogo, ventas, tienda, logistica)
+-- Password usuarios operativos y clientes demo: 123456
+--
+-- GUIA RAPIDA DEMO:
+--   CU01: smartinez / dalvarez / vtorres / rparedes / alucero
+--   CU27: ventas #46, #48, #50, #53 completadas SIN envio (panel Logistica)
+--   CU28-31: envios con estados preparando / en_camino / entregado
+--   CU29: rastrear pedido #2 — telefono 70010002 (Gabriela Suarez)
+--   CU32: confirmar recepcion venta #9 — telefono 70010009 — codigo 591203
+--   CU15-20: crojas / mcevallos / pherrera / dochoa / amena (clientes online)
+--   Pedidos online pendientes: ventas #54-#57
+-- Regenerar bloque envios: python backend/db/_gen_envios_seed.py
+-- Extension post-migracion (carritos, pagos): 12_seed_extension.sql
 -- ============================================================
 
 INSERT INTO roles (id_rol, nombre_rol, descripcion) VALUES
@@ -45,7 +55,8 @@ INSERT INTO usuarios (id_usuario, id_rol, nombre_completo, username, password_ha
 (7, 6, 'Mariana Cevallos', 'mcevallos', 'pbkdf2_sha256$1200000$x2PLPG2q2Ml0qxDiiCCAc0$GGDZt8Jqk9mi8IKYFfvqFp3ZBTxcoxOkg063TjL3D1E=', 'activo', '2026-03-15 11:00:00'),
 (8, 6, 'Paola Herrera', 'pherrera', 'pbkdf2_sha256$1200000$x2PLPG2q2Ml0qxDiiCCAc0$GGDZt8Jqk9mi8IKYFfvqFp3ZBTxcoxOkg063TjL3D1E=', 'activo', '2026-04-02 16:45:00'),
 (9, 6, 'Daniela Ochoa', 'dochoa', 'pbkdf2_sha256$1200000$x2PLPG2q2Ml0qxDiiCCAc0$GGDZt8Jqk9mi8IKYFfvqFp3ZBTxcoxOkg063TjL3D1E=', 'activo', '2026-04-18 10:30:00'),
-(10, 6, 'Andrea Mena', 'amena', 'pbkdf2_sha256$1200000$x2PLPG2q2Ml0qxDiiCCAc0$GGDZt8Jqk9mi8IKYFfvqFp3ZBTxcoxOkg063TjL3D1E=', 'activo', '2026-05-01 19:10:00');
+(10, 6, 'Andrea Mena', 'amena', 'pbkdf2_sha256$1200000$x2PLPG2q2Ml0qxDiiCCAc0$GGDZt8Jqk9mi8IKYFfvqFp3ZBTxcoxOkg063TjL3D1E=', 'activo', '2026-05-01 19:10:00'),
+(11, 5, 'Ana Lucero', 'alucero', 'pbkdf2_sha256$1200000$x2PLPG2q2Ml0qxDiiCCAc0$GGDZt8Jqk9mi8IKYFfvqFp3ZBTxcoxOkg063TjL3D1E=', 'activo', '2026-01-10 09:00:00');
 
 INSERT INTO clientes (id_cliente, nombre_completo, telefono, ciudad, direccion, es_top, estado, creado_en, id_usuario_fk) VALUES
 (1, 'Lucia Fernandez', '+59170010001', 'Santa Cruz', 'Av. San Martin 4to anillo, edif. Trend', FALSE, 'activo', '2026-02-02 10:00:00', NULL),
@@ -320,74 +331,66 @@ INSERT INTO detalles_venta (id_detalle_venta, id_venta, id_producto, cantidad, p
 (92, 57, 18, 1, 95.00, 95.00),
 (93, 57, 2, 1, 105.00, 105.00);
 
-INSERT INTO envios (id_envio, id_venta, tipo_envio, empresa_transporte, estado_envio) VALUES
-(1, 1, 'domicilio', 'RapidGo Santa Cruz', 'en_ruta'),
-(2, 2, 'domicilio', 'FlashCourier', 'despachado'),
-(3, 3, 'domicilio', 'Trendify Delivery SCZ', 'procesando'),
-(4, 4, 'domicilio', 'RapidGo Santa Cruz', 'entregado'),
-(5, 5, 'domicilio', 'FlashCourier', 'en_ruta'),
-(6, 6, 'domicilio', 'Trendify Delivery SCZ', 'despachado'),
-(7, 7, 'domicilio', 'RapidGo Santa Cruz', 'procesando'),
-(8, 8, 'domicilio', 'FlashCourier', 'entregado'),
-(9, 9, 'domicilio', 'Trendify Delivery SCZ', 'en_ruta'),
-(10, 10, 'domicilio', 'RapidGo Santa Cruz', 'despachado'),
-(11, 11, 'domicilio', 'FlashCourier', 'procesando'),
-(12, 12, 'domicilio', 'Trendify Delivery SCZ', 'entregado'),
-(13, 13, 'domicilio', 'RapidGo Santa Cruz', 'en_ruta'),
-(14, 14, 'domicilio', 'FlashCourier', 'despachado'),
-(15, 15, 'domicilio', 'Trendify Delivery SCZ', 'procesando'),
-(16, 16, 'domicilio', 'Transporte Interior BO', 'despachado'),
-(17, 17, 'domicilio', 'FlashCourier', 'en_ruta'),
-(18, 18, 'domicilio', 'Trendify Delivery SCZ', 'despachado'),
-(19, 19, 'domicilio', 'Transporte Interior BO', 'despachado'),
-(20, 20, 'domicilio', 'FlashCourier', 'entregado'),
-(21, 21, 'domicilio', 'Trendify Delivery SCZ', 'en_ruta'),
-(22, 22, 'domicilio', 'RapidGo Santa Cruz', 'despachado'),
-(23, 23, 'domicilio', 'FlashCourier', 'procesando'),
-(24, 24, 'domicilio', 'Transporte Interior BO', 'despachado'),
-(25, 25, 'domicilio', 'Transporte Interior BO', 'despachado'),
-(26, 26, 'domicilio', 'FlashCourier', 'despachado'),
-(27, 27, 'domicilio', 'Trendify Delivery SCZ', 'procesando'),
-(28, 28, 'domicilio', 'RapidGo Santa Cruz', 'entregado'),
-(29, 29, 'domicilio', 'FlashCourier', 'en_ruta'),
-(30, 30, 'domicilio', 'Trendify Delivery SCZ', 'despachado'),
-(31, 31, 'domicilio', 'RapidGo Santa Cruz', 'procesando'),
-(32, 32, 'domicilio', 'FlashCourier', 'entregado'),
-(33, 33, 'domicilio', 'Trendify Delivery SCZ', 'en_ruta'),
-(34, 34, 'domicilio', 'RapidGo Santa Cruz', 'despachado'),
-(35, 35, 'domicilio', 'FlashCourier', 'procesando'),
-(36, 36, 'domicilio', 'Trendify Delivery SCZ', 'entregado'),
-(37, 37, 'domicilio', 'RapidGo Santa Cruz', 'en_ruta'),
-(38, 38, 'domicilio', 'FlashCourier', 'despachado'),
-(39, 39, 'domicilio', 'Trendify Delivery SCZ', 'procesando'),
-(40, 40, 'domicilio', 'RapidGo Santa Cruz', 'entregado'),
-(41, 41, 'domicilio', 'FlashCourier', 'en_ruta'),
-(42, 42, 'domicilio', 'Trendify Delivery SCZ', 'despachado'),
-(43, 43, 'domicilio', 'RapidGo Santa Cruz', 'procesando'),
-(44, 44, 'domicilio', 'FlashCourier', 'entregado'),
-(45, 45, 'domicilio', 'Trendify Delivery SCZ', 'en_ruta'),
-(46, 46, 'domicilio', 'RapidGo Santa Cruz', 'despachado'),
-(47, 47, 'domicilio', 'FlashCourier', 'procesando'),
-(48, 48, 'domicilio', 'Trendify Delivery SCZ', 'entregado'),
-(49, 49, 'domicilio', 'RapidGo Santa Cruz', 'en_ruta'),
-(50, 50, 'domicilio', 'FlashCourier', 'despachado'),
-(51, 51, 'domicilio', 'Trendify Delivery SCZ', 'procesando'),
-(52, 52, 'domicilio', 'RapidGo Santa Cruz', 'entregado'),
-(53, 53, 'domicilio', 'FlashCourier', 'en_ruta'),
-(54, 54, 'domicilio', 'Trendify Delivery SCZ', 'procesando'),
-(55, 55, 'domicilio', 'Trendify Delivery SCZ', 'procesando'),
-(56, 56, 'domicilio', 'Transporte Interior BO', 'procesando'),
-(57, 57, 'domicilio', 'Transporte Interior BO', 'procesando');
+-- Envios Ciclo 5: contraentrega_sc (Bs 15) / transportadora_interior (Bs 35)
+-- Demo CU27: ventas 46, 48, 50, 53 completadas SIN envio
+-- Demo CU29: venta #2 tel. 70010002 | CU32: venta #9 tel. 70010009 codigo 591203
+INSERT INTO envios (id_envio, id_venta, tipo_envio, empresa_transporte, estado_envio, costo_envio, repartidor, codigo_recepcion, recepcion_confirmada) VALUES
+(1, 1, 'contraentrega_sc', 'RapidGo Santa Cruz', 'entregado', 15.00, 'Maria Delivery', '111222', TRUE),
+(2, 2, 'contraentrega_sc', 'FlashCourier', 'en_camino', 15.00, 'Juan Mensajero', '482916', FALSE),
+(3, 3, 'contraentrega_sc', 'Trendify Delivery SCZ', 'entregado', 15.00, NULL, '300003', FALSE),
+(4, 4, 'contraentrega_sc', 'RapidGo Santa Cruz', 'entregado', 15.00, 'Trendify Delivery SCZ', '334455', TRUE),
+(5, 5, 'contraentrega_sc', 'FlashCourier', 'entregado', 15.00, 'Maria Delivery', '100005', FALSE),
+(6, 6, 'contraentrega_sc', 'Trendify Delivery SCZ', 'en_camino', 15.00, 'Juan Mensajero', '200006', FALSE),
+(7, 7, 'contraentrega_sc', 'RapidGo Santa Cruz', 'preparando', 15.00, NULL, NULL, FALSE),
+(8, 8, 'contraentrega_sc', 'FlashCourier', 'entregado', 15.00, NULL, '300008', FALSE),
+(9, 9, 'contraentrega_sc', 'Trendify Delivery SCZ', 'en_camino', 15.00, 'Juan Mensajero', '591203', FALSE),
+(10, 10, 'contraentrega_sc', 'RapidGo Santa Cruz', 'entregado', 15.00, 'Maria Delivery', '100010', FALSE),
+(11, 11, 'contraentrega_sc', 'FlashCourier', 'en_camino', 15.00, 'Juan Mensajero', '200011', FALSE),
+(12, 12, 'contraentrega_sc', 'Trendify Delivery SCZ', 'preparando', 15.00, NULL, NULL, FALSE),
+(13, 13, 'contraentrega_sc', 'RapidGo Santa Cruz', 'entregado', 15.00, NULL, '300013', FALSE),
+(14, 14, 'contraentrega_sc', 'FlashCourier', 'cancelado', 15.00, NULL, NULL, FALSE),
+(15, 15, 'contraentrega_sc', 'Trendify Delivery SCZ', 'entregado', 15.00, 'Maria Delivery', '100015', TRUE),
+(16, 16, 'transportadora_interior', 'Expreso Bus', 'preparando', 35.00, NULL, NULL, FALSE),
+(17, 17, 'contraentrega_sc', 'FlashCourier', 'preparando', 15.00, NULL, NULL, FALSE),
+(18, 18, 'contraentrega_sc', 'Trendify Delivery SCZ', 'entregado', 15.00, NULL, '300018', FALSE),
+(19, 19, 'transportadora_interior', 'Expreso Bus', 'cancelado', 35.00, NULL, NULL, FALSE),
+(20, 20, 'contraentrega_sc', 'FlashCourier', 'entregado', 15.00, 'Maria Delivery', '100020', FALSE),
+(21, 21, 'contraentrega_sc', 'Trendify Delivery SCZ', 'en_camino', 15.00, 'Juan Mensajero', '200021', FALSE),
+(22, 22, 'contraentrega_sc', 'RapidGo Santa Cruz', 'preparando', 15.00, NULL, NULL, FALSE),
+(23, 23, 'contraentrega_sc', 'FlashCourier', 'entregado', 15.00, NULL, '300023', FALSE),
+(24, 24, 'transportadora_interior', 'Transporte Interior BO', 'cancelado', 35.00, NULL, NULL, FALSE),
+(25, 25, 'transportadora_interior', 'Expreso Bus', 'entregado', 35.00, NULL, '100025', FALSE),
+(26, 26, 'contraentrega_sc', 'FlashCourier', 'en_camino', 15.00, 'Juan Mensajero', '200026', FALSE),
+(27, 27, 'contraentrega_sc', 'Trendify Delivery SCZ', 'preparando', 15.00, NULL, NULL, FALSE),
+(28, 28, 'contraentrega_sc', 'RapidGo Santa Cruz', 'entregado', 15.00, NULL, '300028', FALSE),
+(29, 29, 'contraentrega_sc', 'FlashCourier', 'cancelado', 15.00, NULL, NULL, FALSE),
+(30, 30, 'contraentrega_sc', 'Trendify Delivery SCZ', 'entregado', 15.00, 'Maria Delivery', '100030', TRUE),
+(31, 31, 'contraentrega_sc', 'RapidGo Santa Cruz', 'en_camino', 15.00, 'Juan Mensajero', '200031', FALSE),
+(32, 32, 'contraentrega_sc', 'FlashCourier', 'preparando', 15.00, NULL, NULL, FALSE),
+(33, 35, 'contraentrega_sc', 'Trendify Delivery SCZ', 'entregado', 15.00, 'Maria Delivery', '100035', FALSE),
+(34, 36, 'contraentrega_sc', 'RapidGo Santa Cruz', 'en_camino', 15.00, 'Juan Mensajero', '200036', FALSE),
+(35, 39, 'contraentrega_sc', 'FlashCourier', 'cancelado', 15.00, NULL, NULL, FALSE),
+(36, 40, 'contraentrega_sc', 'Trendify Delivery SCZ', 'entregado', 15.00, 'Maria Delivery', '100040', FALSE),
+(37, 43, 'contraentrega_sc', 'RapidGo Santa Cruz', 'entregado', 15.00, NULL, '300043', FALSE),
+(38, 44, 'contraentrega_sc', 'FlashCourier', 'cancelado', 15.00, NULL, NULL, FALSE),
+(39, 47, 'contraentrega_sc', 'Trendify Delivery SCZ', 'preparando', 15.00, NULL, NULL, FALSE),
+(40, 49, 'contraentrega_sc', 'RapidGo Santa Cruz', 'cancelado', 15.00, NULL, NULL, FALSE);
 
 INSERT INTO bitacora (id_bitacora, id_usuario, accion, tabla_afectada, registro_afectado_id, detalle, fecha_hora, direccion_ip) VALUES
 (1, 1, 'INSERT', 'usuarios', 2, 'Alta de administradora Sofia Martinez', '2026-01-06 09:05:00', '192.168.1.10'),
 (2, 5, 'INSERT', 'compras', 6, 'Compra Medicube junio lote MC-2506', '2026-06-15 10:35:00', '192.168.1.24'),
 (3, 4, 'UPDATE', 'inventario', 7, 'Stock critico Rare Beauty blush', '2026-06-20 11:00:00', '192.168.1.18'),
-(4, 3, 'INSERT', 'ventas', 57, 'Venta completada mostrador Santa Cruz', '2026-06-22 11:30:00', '192.168.1.15'),
+(4, 3, 'INSERT', 'ventas', 48, 'Venta completada mostrador Santa Cruz', '2026-06-22 11:30:00', '192.168.1.15'),
 (5, 2, 'CONSULTAR_DASHBOARD', 'reportes', NULL, 'KPIs periodo=mes', '2026-06-22 08:00:00', '192.168.1.12'),
 (6, 1, 'INSERT', 'movimientos_inventario', 12, 'Salida lip mask fin de semana', '2026-06-21 17:05:00', '192.168.1.10'),
-(7, 3, 'INSERT', 'ventas', 61, 'Pedido online pendiente validacion', '2026-06-22 18:30:00', '192.168.1.15'),
-(8, 1, 'ATENDER_ALERTA_PREDICTIVA', 'productos', 12, 'Reposicion Laneige Lip Mask solicitada', '2026-06-21 09:00:00', '192.168.1.10');
+(7, 3, 'INSERT', 'ventas', 54, 'Pedido online pendiente validacion WEB-0622-001', '2026-06-22 18:30:00', '192.168.1.15'),
+(8, 1, 'ATENDER_ALERTA_PREDICTIVA', 'productos', 12, 'Reposicion Laneige Lip Mask solicitada', '2026-06-21 09:00:00', '192.168.1.10'),
+(9, 3, 'INSERT', 'envios', 2, 'Envio creado venta #2 contraentrega_sc Bs 15', '2026-03-08 11:30:00', '192.168.1.15'),
+(10, 3, 'UPDATE', 'envios', 2, 'Estado en_camino — repartidor Juan Mensajero — codigo 482916', '2026-03-09 09:00:00', '192.168.1.15'),
+(11, 3, 'UPDATE', 'envios', 9, 'Estado en_camino venta #9 — codigo recepcion 591203', '2026-03-30 08:15:00', '192.168.1.15'),
+(12, 2, 'UPDATE', 'envios', 1, 'Recepcion confirmada venta #1 codigo 111222', '2026-03-06 18:00:00', '192.168.1.12'),
+(13, 11, 'CONSULTAR', 'bitacora', NULL, 'Auditoria movimientos junio 2026', '2026-06-22 07:45:00', '192.168.1.30'),
+(14, 3, 'INSERT', 'envios', 16, 'Envio interior La Paz venta #16 transportadora Bs 35', '2026-04-19 17:30:00', '192.168.1.15');
 
 -- Ajuste de secuencias
 SELECT setval(pg_get_serial_sequence('roles', 'id_rol'), (SELECT MAX(id_rol) FROM roles));

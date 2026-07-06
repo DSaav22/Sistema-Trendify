@@ -1,0 +1,5 @@
+-- Ciclo 5 — CU30/CU31/CU32: columnas adicionales en envios
+ALTER TABLE envios ADD COLUMN IF NOT EXISTS costo_envio NUMERIC(10,2);
+ALTER TABLE envios ADD COLUMN IF NOT EXISTS repartidor VARCHAR(100);
+ALTER TABLE envios ADD COLUMN IF NOT EXISTS codigo_recepcion VARCHAR(10);
+ALTER TABLE envios ADD COLUMN IF NOT EXISTS recepcion_confirmada BOOLEAN NOT NULL DEFAULT FALSE;

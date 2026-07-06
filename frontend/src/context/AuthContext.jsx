@@ -24,9 +24,18 @@ function normalizeLoginPayload(data) {
     id_usuario: data?.id_usuario,
     username: data?.username,
     id_rol: data?.id_rol,
+    nombre_rol: data?.nombre_rol,
   };
 
-  const user = userFromPayload || fallbackUser;
+  const baseUser = userFromPayload || fallbackUser;
+  const user = {
+    ...baseUser,
+    nombre_rol:
+      baseUser?.nombre_rol ||
+      data?.nombre_rol ||
+      baseUser?.id_rol?.nombre_rol ||
+      null,
+  };
 
   if (!token || !user?.id_usuario || !user?.username) {
     throw new Error('La respuesta de autenticacion no contiene los campos esperados.');

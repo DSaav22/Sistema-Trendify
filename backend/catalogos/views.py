@@ -21,6 +21,7 @@ from rest_framework.response import Response
 import stripe
 
 from .authentication import CustomJWTAuthentication
+from .envio_logistica import calcular_costo_envio, tipo_envio_sugerido
 
 # Importa modelos y serializers de esta misma app.
 from .models import (
@@ -49,7 +50,7 @@ from .serializers import (
     ClienteSerializer,
     CompraSerializer,
     DetalleVentaSerializer,
-    EnvioEstadoSerializer,
+    EnvioPatchSerializer,
     EnvioSerializer,
     InventarioSerializer,
     MarcaSerializer,
@@ -1592,7 +1593,7 @@ def _telefonos_coinciden_rastreo(telefono_cliente, telefono_ingresado):
 
 
 class EnvioViewSet(BitacoraMixin, viewsets.ModelViewSet):
-    """CU27/CU28 — Gestionar y actualizar envios de pedidos."""
+    """CU27/CU28/CU31 — Gestionar y actualizar envios de pedidos."""
     queryset = (
         Envio.objects
         .select_related('id_venta', 'id_venta__id_cliente')
@@ -1605,7 +1606,7 @@ class EnvioViewSet(BitacoraMixin, viewsets.ModelViewSet):
 
     def get_serializer_class(self):
         if self.action == 'partial_update':
-            return EnvioEstadoSerializer
+            return EnvioPatchSerializer
         return EnvioSerializer
 
     def get_queryset(self):
@@ -1644,6 +1645,49 @@ class EnvioViewSet(BitacoraMixin, viewsets.ModelViewSet):
             for v in ventas
         ]
         return Response(data)
+
+
+class CostoEnvioView(APIView):
+    """CU30 — Calcular costo de envio (publico)."""
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request, *args, **kwargs):
+        ciudad = (request.query_params.get('ciudad') or '').strip()
+        tipo_envio = (
+            request.query_params.get('tipo_envio')
+            or request.query_params.get('tipo')
+            or tipo_envio_sugerido(ciudad)
+        )
+
+        if not ciudad:
+            return Response(
+                {'detail': 'Indica la ciudad o departamento de envio.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            costo = calcular_costo_envio(ciudad, tipo_envio)
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        subtotal_raw = request.query_params.get('subtotal')
+        subtotal = None
+        total = None
+        if subtotal_raw is not None:
+            try:
+                subtotal = float(subtotal_raw)
+                total = round(subtotal + float(costo), 2)
+            except (TypeError, ValueError):
+                subtotal = None
+
+        return Response({
+            'ciudad': ciudad,
+            'tipo_envio': (tipo_envio or '').strip().lower(),
+            'costo_envio': str(costo),
+            'subtotal': str(subtotal) if subtotal is not None else None,
+            'total': str(total) if total is not None else None,
+        })
 
 
 class PublicRastreoView(APIView):
@@ -1699,14 +1743,94 @@ class PublicRastreoView(APIView):
                 'estado_legible': 'Pedido confirmado — envio en preparacion',
                 'tipo_envio': None,
                 'empresa_transporte': None,
+                'costo_envio': None,
+                'recepcion_confirmada': False,
+                'puede_confirmar_recepcion': False,
             })
+
+        estado = (envio.estado_envio or '').lower()
+        puede_confirmar = (
+            estado in ('en_camino', 'en_ruta', 'despachado')
+            and not envio.recepcion_confirmada
+        )
+        if envio.recepcion_confirmada:
+            legible = 'Recepcion confirmada — pedido entregado'
+        else:
+            legible = estado_envio_legible(envio.estado_envio)
 
         return Response({
             'id_venta': venta.id_venta,
             'tiene_envio': True,
             'estado_venta': venta.estado_venta,
             'estado_envio': envio.estado_envio,
-            'estado_legible': estado_envio_legible(envio.estado_envio),
+            'estado_legible': legible,
             'tipo_envio': envio.tipo_envio,
             'empresa_transporte': envio.empresa_transporte,
+            'costo_envio': str(envio.costo_envio) if envio.costo_envio is not None else None,
+            'repartidor': envio.repartidor,
+            'recepcion_confirmada': bool(envio.recepcion_confirmada),
+            'puede_confirmar_recepcion': puede_confirmar,
+        })
+
+
+class ConfirmarRecepcionView(APIView):
+    """CU32 — Confirmar recepcion del pedido con codigo."""
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        id_venta_raw = request.data.get('id_venta') or request.data.get('id')
+        telefono = (request.data.get('telefono') or '').strip()
+        codigo = (request.data.get('codigo') or request.data.get('codigo_recepcion') or '').strip()
+
+        try:
+            id_venta = int(id_venta_raw)
+        except (TypeError, ValueError):
+            return Response({'detail': 'Pedido no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not telefono or not codigo:
+            return Response(
+                {'detail': 'Ingresa telefono y codigo de recepcion.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        venta = Venta.objects.select_related('id_cliente').filter(id_venta=id_venta).first()
+        if venta is None or not _telefonos_coinciden_rastreo(venta.id_cliente.telefono, telefono):
+            return Response({'detail': 'Pedido no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+        envio = Envio.objects.filter(id_venta=venta).first()
+        if envio is None:
+            return Response(
+                {'detail': 'El pedido aun no tiene envio registrado.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if envio.recepcion_confirmada:
+            return Response(
+                {'detail': 'La recepcion ya fue confirmada.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not envio.codigo_recepcion:
+            return Response(
+                {'detail': 'El envio aun no tiene codigo de recepcion. Debe estar en camino.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if codigo != envio.codigo_recepcion:
+            return Response(
+                {'detail': 'Codigo de recepcion incorrecto.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        envio.recepcion_confirmada = True
+        envio.estado_envio = 'entregado'
+        envio.save(update_fields=['recepcion_confirmada', 'estado_envio'])
+
+        return Response({
+            'id_venta': venta.id_venta,
+            'recepcion_confirmada': True,
+            'estado_envio': envio.estado_envio,
+            'estado_legible': 'Recepcion confirmada — pedido entregado',
+            'message': 'Gracias por confirmar la recepcion de tu pedido.',
         })

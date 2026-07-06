@@ -16,7 +16,18 @@ Elegí **una** forma de correr el proyecto:
 
 Credenciales por defecto de la base: usuario `postgres`, contraseña `diego`, base `cosmetica_sistema`.
 
-Usuarios seed (contraseña **`123456`**): `smartinez`, `dalvarez`, `vtorres`, `rparedes`, `alucero`.
+Usuarios seed del panel (contraseña **`123456`**):
+
+| Usuario | Rol |
+|---------|-----|
+| `tchavez` | Administrador (dueña) |
+| `smartinez` | Administrador |
+| `dalvarez` | Vendedor |
+| `vtorres` | Bodeguero |
+| `rparedes` | Compras |
+| `alucero` | Auditor (bitácora) |
+
+Clientes tienda online (contraseña **`123456`**): `crojas`, `mcevallos`, `pherrera`, `dochoa`, `amena`.
 
 ---
 
@@ -42,7 +53,7 @@ La primera vez tarda más: construye imágenes, crea el volumen de PostgreSQL, c
 
 | Componente | Qué crea / hace |
 |------------|------------------|
-| **db** | Contenedor PostgreSQL 15. En el **primer** arranque del volumen ejecuta los SQL de `backend/db/` (schema, seed, migraciones SQL). Los datos quedan en el volumen `postgres_data`. |
+| **db** | Contenedor PostgreSQL 15. En el **primer** arranque del volumen ejecuta los SQL de `backend/db/` (schema, seed, migraciones SQL y `12_seed_extension.sql`). Los datos quedan en el volumen `postgres_data`. |
 | **backend** | Imagen Python con dependencias. Al iniciar: espera a PostgreSQL → migraciones Django → reset de contraseñas seed → `runserver` en el puerto 8000 **dentro** de la red Docker (expuesto como **8001** en tu PC). |
 | **frontend** | Imagen Node. Ejecuta Vite en el puerto 5173 **dentro** del contenedor (expuesto como **5175** en tu PC). El proxy `/api` apunta a `http://backend:8000`. |
 
@@ -91,8 +102,17 @@ Set-Location ..\..
 ```
 
 Ese script ya aplica también:
+- `08_migracion_pedidos_guardados.sql` (carritos guardados)
 - `09_migracion_pago_transacciones.sql` (trazabilidad de pagos)
-- `10_migracion_backfill_clientes_usuario.sql` (vincula usuarios cliente antiguos con tabla `clientes`)
+- `10_migracion_backfill_clientes_usuario.sql` (vincula usuarios cliente con `clientes`)
+- `11_migracion_envios_ciclo5.sql` (logística: costo, repartidor, código recepción)
+- `12_seed_extension.sql` (pedidos guardados + transacciones de pago demo)
+
+Si `psql` no está en el PATH, usá la ruta completa (ejemplo PostgreSQL 18):
+
+```powershell
+& 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -U postgres -h 127.0.0.1 -d postgres -f backend\db\00_run_all.psql
+```
 
 ### 3. Migraciones Django (solo la primera vez)
 
@@ -152,6 +172,39 @@ npm.cmd run dev
 El proxy de Vite envía `/api` al backend ([frontend/vite.config.js](frontend/vite.config.js)).
 
 **Probar desde el celular (misma Wi‑Fi):** en la terminal de Vite aparece una línea `Network: http://192.168.x.x:5173/`. Abrí esa IP en el navegador del celular (no `localhost`). El backend debe seguir corriendo en la PC.
+
+---
+
+## Datos demo del seed (`backend/db/03_seed.sql`)
+
+El seed carga un escenario completo para probar **Ciclos 1–5** sin capturar datos a mano:
+
+| Área | Qué incluye |
+|------|-------------|
+| Catálogo | 24 productos, 8 categorías, stock e historial de movimientos |
+| Ventas | 57 ventas (mostrador + online), pagos QR/transferencia pendientes |
+| Tienda online | Pedidos `#54`–`#57` en `pendiente_validacion` |
+| Logística (Ciclo 5) | 40 envíos con tarifas SCZ / interior, repartidores y códigos |
+| Carritos | 3 pedidos guardados (`12_seed_extension.sql`) |
+| Pagos | 10 transacciones de trazabilidad (`pagos_transacciones`) |
+
+### Demo rápida — Ciclo 5 (logística)
+
+Iniciá sesión como `dalvarez` / `123456` y usá el menú **Logística / Envíos** o la **tienda pública** (`/` sin login de operador).
+
+| Caso de uso | Cómo probarlo |
+|-------------|---------------|
+| **CU27** Crear envío | Ventas completadas **#46, #48, #50 o #53** (sin envío asignado) |
+| **CU28** Cambiar estado | Cualquier envío en `preparando` → `en_camino` → `entregado` |
+| **CU29** Rastrear pedido | Tienda pública → rastreo: pedido **#2**, teléfono `70010002` |
+| **CU30** Costo de envío | Checkout tienda: Santa Cruz **Bs 15**, interior **Bs 35** |
+| **CU31** Asignar repartidor | Envíos `contraentrega_sc` en estado `en_camino` |
+| **CU32** Confirmar recepción | Rastreo pedido **#9**, tel. `70010009`, código **`591203`** |
+| Pedidos online | Confirmar ventas **#54–#57** en panel operador antes de crear envío |
+
+Tarifas: `contraentrega_sc` = Bs 15 (Santa Cruz) · `transportadora_interior` = Bs 35.
+
+Regenerar solo el bloque de envíos: `python backend/db/_gen_envios_seed.py`
 
 ---
 

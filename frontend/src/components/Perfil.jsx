@@ -3,32 +3,8 @@ import { useMemo, useState } from 'react';
 import api from '../utils/api';
 import { evaluatePasswordRules, validatePassword } from '../utils/passwordValidation';
 import { useAuth } from '../context/AuthContext';
+import { extractRoleId, ROLE_LABELS } from '../utils/roleUtils';
 import UserAvatar from './UserAvatar';
-
-const ROLE_LABELS = {
-  1: 'Administrador',
-  2: 'Vendedor',
-  3: 'Bodeguero',
-  4: 'Compras',
-  5: 'Auditor',
-  6: 'Cliente',
-};
-
-function extractRoleId(user) {
-  if (!user) return null;
-  const candidates = [
-    user?.id_rol?.id_rol,
-    user?.id_rol,
-    user?.rol?.id_rol,
-    user?.rol,
-    user?.role_id,
-  ];
-  for (const value of candidates) {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  }
-  return null;
-}
 
 export default function Perfil() {
   const { user } = useAuth();

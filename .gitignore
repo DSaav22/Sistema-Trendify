@@ -4,6 +4,7 @@
 .env.local
 .env.*.local
 *.env.production.real
+backend/.deploy-ciclo5.env
 
 # --- Python / Django ---
 backend/.venv/

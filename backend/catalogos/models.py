@@ -238,6 +238,10 @@ class Envio(models.Model):
     tipo_envio = models.CharField(max_length=30)
     empresa_transporte = models.CharField(max_length=100, blank=True, null=True)
     estado_envio = models.CharField(max_length=20)
+    costo_envio = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    repartidor = models.CharField(max_length=100, blank=True, null=True)
+    codigo_recepcion = models.CharField(max_length=10, blank=True, null=True)
+    recepcion_confirmada = models.BooleanField(default=False)
 
     def __str__(self):
         return f'Envio #{self.id_envio} - Venta #{self.id_venta_id}'

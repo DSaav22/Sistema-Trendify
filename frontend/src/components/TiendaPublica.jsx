@@ -14,6 +14,8 @@ const PUBLIC_MARCAS_URL = '/api/public/marcas/';
 const PUBLIC_CHECKOUT_URL = '/api/public/checkout/';
 const MIS_PEDIDOS_URL = '/api/mis-pedidos/';
 const PUBLIC_RASTREO_URL = '/api/public/rastrear-pedido/';
+const PUBLIC_COSTO_ENVIO_URL = '/api/public/costo-envio/';
+const PUBLIC_CONFIRMAR_RECEPCION_URL = '/api/public/confirmar-recepcion/';
 const MI_PERFIL_URL = '/api/mi-perfil-cliente/';
 const PEDIDOS_GUARDADOS_URL = '/api/pedidos-guardados/';
 const REGISTRO_URL = '/api/auth/registro/';
@@ -41,6 +43,14 @@ function formatearFecha(isoString) {
 
 function stockDisponible(producto) {
   return Math.max(0, Number(producto?.stock_actual ?? 0));
+}
+
+function esSantaCruz(ciudad) {
+  return String(ciudad || '').toLowerCase().includes('santa cruz');
+}
+
+function tipoEnvioPorCiudad(ciudad) {
+  return esSantaCruz(ciudad) ? 'contraentrega_sc' : 'transportadora_interior';
 }
 
 function badgeEstadoPedido(estado) {
@@ -108,10 +118,13 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
   const [mostrarRegistro, setMostrarRegistro] = useState(false);
   const [mostrarMisPedidos, setMostrarMisPedidos] = useState(false);
   const [mostrarRastrearPedido, setMostrarRastrearPedido] = useState(false);
-  const [rastreoForm, setRastreoForm] = useState({ id_venta: '', telefono: '' });
+  const [rastreoForm, setRastreoForm] = useState({ id_venta: '', telefono: '', codigo: '' });
   const [rastreoResult, setRastreoResult] = useState(null);
   const [rastreoError, setRastreoError] = useState('');
   const [rastreoLoading, setRastreoLoading] = useState(false);
+  const [confirmandoRecepcion, setConfirmandoRecepcion] = useState(false);
+  const [tipoEnvio, setTipoEnvio] = useState('contraentrega_sc');
+  const [costoEnvio, setCostoEnvio] = useState(0);
   const [productoDetalle, setProductoDetalle] = useState(null);
   const [ultimaVentaId, setUltimaVentaId] = useState(null);
   
@@ -178,6 +191,11 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
   const total = useMemo(
     () => carrito.reduce((acc, item) => acc + Number(item.precio_venta) * item.cantidad, 0),
     [carrito]
+  );
+
+  const totalConEnvio = useMemo(
+    () => total + Number(costoEnvio || 0),
+    [total, costoEnvio]
   );
 
   const productosFiltrados = useMemo(() => {
@@ -283,6 +301,30 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
       cargarPedidosGuardados();
     }
   }, [isClienteAutenticado, openCheckout]);
+
+  useEffect(() => {
+    if (!cliente.ciudad?.trim() || checkoutStep !== 'checkout') {
+      setCostoEnvio(0);
+      return undefined;
+    }
+    let active = true;
+    const cargarCosto = async () => {
+      try {
+        const { data } = await api.get(PUBLIC_COSTO_ENVIO_URL, {
+          params: {
+            ciudad: cliente.ciudad.trim(),
+            tipo_envio: tipoEnvio,
+            subtotal: total,
+          },
+        });
+        if (active) setCostoEnvio(Number(data.costo_envio || 0));
+      } catch {
+        if (active) setCostoEnvio(0);
+      }
+    };
+    cargarCosto();
+    return () => { active = false; };
+  }, [cliente.ciudad, tipoEnvio, checkoutStep, total]);
 
   const cargarMisPedidos = async () => {
       setCargandoPedidos(true);
@@ -450,6 +492,9 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
       solicitarLoginParaCheckout();
       return;
     }
+    if (cliente.ciudad) {
+      setTipoEnvio(tipoEnvioPorCiudad(cliente.ciudad));
+    }
     setCheckoutStep('checkout');
     setCheckoutError('');
   };
@@ -463,6 +508,9 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
   const handleClienteChange = (event) => {
     const { name, value } = event.target;
     const nextValue = name === 'telefono' ? sanitizeTelefono(value) : value;
+    if (name === 'ciudad') {
+      setTipoEnvio(tipoEnvioPorCiudad(nextValue));
+    }
     setCliente((prev) => ({ ...prev, [name]: nextValue }));
   };
 
@@ -619,11 +667,44 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
   };
 
   const abrirRastreo = () => {
-    setRastreoForm({ id_venta: '', telefono: cliente.telefono || '' });
+    setRastreoForm({ id_venta: '', telefono: cliente.telefono || '', codigo: '' });
     setRastreoResult(null);
     setRastreoError('');
     setMostrarRastrearPedido(true);
     setMenuAbierto(false);
+  };
+
+  const handleConfirmarRecepcion = async (e) => {
+    e.preventDefault();
+    setRastreoError('');
+    const idVenta = String(rastreoForm.id_venta || rastreoResult?.id_venta || '').trim();
+    const telefono = sanitizeTelefono(rastreoForm.telefono);
+    const codigo = String(rastreoForm.codigo || '').trim();
+    if (!idVenta || !telefono || !codigo) {
+      setRastreoError('Completa pedido, telefono y codigo de recepcion.');
+      return;
+    }
+    setConfirmandoRecepcion(true);
+    try {
+      const { data } = await api.post(PUBLIC_CONFIRMAR_RECEPCION_URL, {
+        id_venta: idVenta,
+        telefono,
+        codigo,
+      });
+      setRastreoResult((prev) => ({
+        ...prev,
+        ...data,
+        estado_legible: data.estado_legible || 'Recepcion confirmada',
+        recepcion_confirmada: true,
+        puede_confirmar_recepcion: false,
+      }));
+      mostrarToast('Recepcion confirmada. Gracias!');
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      setRastreoError(typeof detail === 'string' ? detail : 'No se pudo confirmar la recepcion.');
+    } finally {
+      setConfirmandoRecepcion(false);
+    }
   };
 
   return (
@@ -944,7 +1025,34 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
                   <div className="mt-3 space-y-1 text-sm text-slate-700">
                     <p><span className="font-semibold">Tipo:</span> {rastreoResult.tipo_envio || '-'}</p>
                     <p><span className="font-semibold">Transportadora:</span> {rastreoResult.empresa_transporte || '-'}</p>
+                    {rastreoResult.costo_envio && (
+                      <p><span className="font-semibold">Costo envio:</span> {currency(rastreoResult.costo_envio)}</p>
+                    )}
+                    {rastreoResult.repartidor && (
+                      <p><span className="font-semibold">Repartidor:</span> {rastreoResult.repartidor}</p>
+                    )}
                   </div>
+                )}
+                {rastreoResult.puede_confirmar_recepcion && !rastreoResult.recepcion_confirmada && (
+                  <form onSubmit={handleConfirmarRecepcion} className="mt-4 space-y-3 border-t border-sky-200 pt-4">
+                    <p className="text-xs font-bold uppercase text-sky-800">CU32 — Confirmar recepcion</p>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={6}
+                      value={rastreoForm.codigo}
+                      onChange={(e) => setRastreoForm((f) => ({ ...f, codigo: e.target.value.replace(/\D/g, '') }))}
+                      placeholder="Codigo de 6 digitos"
+                      className="w-full rounded-xl border border-sky-200 px-3 py-2 text-sm"
+                    />
+                    <button
+                      type="submit"
+                      disabled={confirmandoRecepcion}
+                      className="w-full rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-60"
+                    >
+                      {confirmandoRecepcion ? 'Confirmando...' : 'Confirmar que recibi mi pedido'}
+                    </button>
+                  </form>
                 )}
               </div>
             )}
@@ -1192,6 +1300,37 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
                     <input name="telefono" inputMode="numeric" value={cliente.telefono} onChange={handleClienteChange} placeholder="Telefono (solo numeros) *" className="w-full border p-3 rounded-xl text-sm" />
                     <SelectDepartamento name="ciudad" value={cliente.ciudad} onChange={handleClienteChange} className="w-full border p-3 rounded-xl text-sm bg-white" placeholder="Selecciona departamento *" required />
                     <textarea name="direccion" value={cliente.direccion} onChange={handleClienteChange} rows={2} placeholder="Direccion exacta *" className="w-full border p-3 rounded-xl text-sm" />
+
+                    <div className="rounded-xl border border-sky-100 bg-sky-50 p-3">
+                      <p className="text-xs font-bold uppercase tracking-wider text-sky-800">CU30 — Modalidad y costo de envio</p>
+                      <div className="mt-2 space-y-2">
+                        {esSantaCruz(cliente.ciudad) && (
+                          <label className="flex items-center gap-2 text-sm">
+                            <input
+                              type="radio"
+                              name="tipo_envio"
+                              checked={tipoEnvio === 'contraentrega_sc'}
+                              onChange={() => setTipoEnvio('contraentrega_sc')}
+                            />
+                            Delivery Santa Cruz (Bs 15)
+                          </label>
+                        )}
+                        <label className="flex items-center gap-2 text-sm">
+                          <input
+                            type="radio"
+                            name="tipo_envio"
+                            checked={tipoEnvio === 'transportadora_interior'}
+                            onChange={() => setTipoEnvio('transportadora_interior')}
+                          />
+                          Transportadora al interior (Bs 35)
+                        </label>
+                      </div>
+                      <div className="mt-3 space-y-1 text-sm text-slate-700">
+                        <p className="flex justify-between"><span>Subtotal productos</span><span>{currency(total)}</span></p>
+                        <p className="flex justify-between font-semibold text-sky-800"><span>Costo envio</span><span>{currency(costoEnvio)}</span></p>
+                        <p className="flex justify-between border-t border-sky-200 pt-2 text-base font-black text-slate-900"><span>Total estimado</span><span>{currency(totalConEnvio)}</span></p>
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -1239,7 +1378,10 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
                       <div className="absolute top-2 right-6 bg-white w-2 h-2" />
                       <div className="text-white text-xs font-bold text-center">SCAN</div>
                     </div>
-                    <p className="mt-3 text-sm font-semibold mb-1">Total: {currency(total)}</p>
+                    <p className="mt-3 text-sm font-semibold mb-1">Total productos: {currency(total)}</p>
+                    {costoEnvio > 0 && (
+                      <p className="text-sm text-sky-700">+ Envio: {currency(costoEnvio)}</p>
+                    )}
                   </div>
                 )}
 

@@ -67,6 +67,18 @@ function labelEstado(estado) {
   return LABEL_ESTADO[(estado || '').toLowerCase()] || estado || '-';
 }
 
+const REPARTIDORES_SUGERIDOS = [
+  'Trendify Delivery SCZ',
+  'Juan Mensajero',
+  'Maria Delivery',
+  'RapidGo Santa Cruz',
+];
+
+function puedeAsignarRepartidor(tipo) {
+  const t = (tipo || '').toLowerCase();
+  return t === 'contraentrega_sc' || t === 'domicilio';
+}
+
 function CrearEnvioModal({ open, onClose, onCreated }) {
   const [ventas, setVentas] = useState([]);
   const [loadingVentas, setLoadingVentas] = useState(false);
@@ -255,8 +267,11 @@ export default function EnviosManager() {
   const cambiarEstado = async (envio, nuevoEstado) => {
     setActualizandoId(envio.id_envio);
     try {
-      await api.patch(`${ENVIOS_URL}${envio.id_envio}/`, { estado_envio: nuevoEstado });
+      const { data } = await api.patch(`${ENVIOS_URL}${envio.id_envio}/`, { estado_envio: nuevoEstado });
       setToast(`Envio #${envio.id_envio} actualizado a ${labelEstado(nuevoEstado)}`);
+      if (data?.codigo_recepcion) {
+        setToast(`Codigo recepcion (CU32): ${data.codigo_recepcion}`);
+      }
       await cargarEnvios();
     } catch (err) {
       const msg = err?.response?.data?.estado_envio?.[0]
@@ -268,12 +283,32 @@ export default function EnviosManager() {
     }
   };
 
+  const asignarRepartidor = async (envio, repartidor) => {
+    if (!repartidor?.trim()) return;
+    setActualizandoId(envio.id_envio);
+    try {
+      const { data } = await api.patch(`${ENVIOS_URL}${envio.id_envio}/`, { repartidor: repartidor.trim() });
+      setToast(`Repartidor asignado: ${repartidor}`);
+      if (data?.codigo_recepcion && !envio.codigo_recepcion) {
+        setToast(`Repartidor OK. Codigo CU32: ${data.codigo_recepcion}`);
+      }
+      await cargarEnvios();
+    } catch (err) {
+      const msg = err?.response?.data?.repartidor?.[0]
+        || err?.response?.data?.detail
+        || 'No se pudo asignar repartidor.';
+      setError(typeof msg === 'string' ? msg : 'Error al asignar repartidor.');
+    } finally {
+      setActualizandoId(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 className="text-2xl font-black text-slate-900">Logistica y envios</h2>
-          <p className="mt-1 text-sm text-slate-500">CU27 — registrar envios · CU28 — actualizar estado</p>
+          <p className="mt-1 text-sm text-slate-500">CU27–CU28–CU31 operador · CU29–CU30–CU32 cliente</p>
         </div>
         <button
           type="button"
@@ -329,8 +364,10 @@ export default function EnviosManager() {
                   <th className="px-4 py-3 font-semibold">Cliente</th>
                   <th className="px-4 py-3 font-semibold">Tipo</th>
                   <th className="px-4 py-3 font-semibold">Transportadora</th>
+                  <th className="px-4 py-3 font-semibold">Repartidor</th>
+                  <th className="px-4 py-3 font-semibold">Codigo CU32</th>
                   <th className="px-4 py-3 font-semibold">Estado</th>
-                  <th className="px-4 py-3 font-semibold">Acciones (CU28)</th>
+                  <th className="px-4 py-3 font-semibold">Acciones</th>
                 </tr>
               </thead>
               <tbody>
@@ -347,6 +384,31 @@ export default function EnviosManager() {
                       </td>
                       <td className="px-4 py-3 text-slate-700">{labelTipo(envio.tipo_envio)}</td>
                       <td className="px-4 py-3 text-slate-700">{envio.empresa_transporte || '-'}</td>
+                      <td className="px-4 py-3 text-slate-700">
+                        {puedeAsignarRepartidor(envio.tipo_envio) ? (
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs">{envio.repartidor || 'Sin asignar'}</span>
+                            <select
+                              className="max-w-[140px] rounded border border-slate-200 px-1 py-0.5 text-xs"
+                              defaultValue=""
+                              disabled={actualizandoId === envio.id_envio}
+                              onChange={(ev) => {
+                                if (ev.target.value) asignarRepartidor(envio, ev.target.value);
+                              }}
+                            >
+                              <option value="">CU31 Asignar...</option>
+                              {REPARTIDORES_SUGERIDOS.map((r) => (
+                                <option key={r} value={r}>{r}</option>
+                              ))}
+                            </select>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-slate-400">N/A interior</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-violet-700">
+                        {envio.codigo_recepcion || '-'}
+                      </td>
                       <td className="px-4 py-3">
                         <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${badgeEstado(estado)}`}>
                           {envio.estado_legible || labelEstado(estado)}

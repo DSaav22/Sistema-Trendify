@@ -336,7 +336,7 @@ class VentaSerializer(serializers.ModelSerializer):
         read_only_fields = ['id_usuario', 'fecha_hora', 'monto_total', 'vuelto', 'estado_venta']
 
 
-# CU27/CU28 — Ciclo 5 Logística
+from .envio_logistica import calcular_costo_envio, generar_codigo_recepcion
 TIPOS_ENVIO_VALIDOS = {'contraentrega_sc', 'transportadora_interior', 'domicilio'}
 ESTADO_ENVIO_INICIAL = 'preparando'
 
@@ -412,12 +412,21 @@ class EnvioSerializer(serializers.ModelSerializer):
             'empresa_transporte',
             'estado_envio',
             'estado_legible',
+            'costo_envio',
+            'repartidor',
+            'codigo_recepcion',
+            'recepcion_confirmada',
             'cliente_nombre',
             'cliente_telefono',
             'monto_total',
             'fecha_venta',
         ]
-        read_only_fields = ['id_envio', 'estado_envio']
+        read_only_fields = [
+            'id_envio',
+            'estado_envio',
+            'codigo_recepcion',
+            'recepcion_confirmada',
+        ]
 
     def get_estado_legible(self, obj):
         return estado_envio_legible(obj.estado_envio)
@@ -458,6 +467,16 @@ class EnvioSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         validated_data['estado_envio'] = ESTADO_ENVIO_INICIAL
+        venta = validated_data.get('id_venta')
+        tipo = validated_data.get('tipo_envio')
+        if venta is not None and validated_data.get('costo_envio') is None:
+            try:
+                validated_data['costo_envio'] = calcular_costo_envio(
+                    venta.id_cliente.ciudad,
+                    tipo,
+                )
+            except ValueError:
+                pass
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
@@ -470,18 +489,28 @@ class EnvioSerializer(serializers.ModelSerializer):
         return super().update(instance, validated_data)
 
 
-class EnvioEstadoSerializer(serializers.ModelSerializer):
-    """CU28 — actualizacion parcial de estado."""
+class EnvioPatchSerializer(serializers.ModelSerializer):
+    """CU28/CU31 — actualizar estado o asignar repartidor."""
 
     class Meta:
         model = Envio
-        fields = ['estado_envio', 'empresa_transporte']
+        fields = ['estado_envio', 'empresa_transporte', 'repartidor']
 
     def validate_estado_envio(self, valor):
+        if valor is None:
+            return valor
         nuevo = (valor or '').strip().lower()
         if not nuevo:
             raise serializers.ValidationError('El estado es obligatorio.')
         return nuevo
+
+    def validate_repartidor(self, valor):
+        if valor is None:
+            return valor
+        texto = str(valor).strip()
+        if not texto:
+            return None
+        return texto
 
     def validate(self, attrs):
         nuevo_estado = attrs.get('estado_envio')
@@ -489,4 +518,33 @@ class EnvioEstadoSerializer(serializers.ModelSerializer):
             ok, mensaje = validar_transicion_envio(self.instance.estado_envio, nuevo_estado)
             if not ok:
                 raise serializers.ValidationError({'estado_envio': mensaje})
+
+        repartidor = attrs.get('repartidor')
+        if repartidor is not None:
+            tipo = (self.instance.tipo_envio or '').lower()
+            if tipo not in ('contraentrega_sc', 'domicilio'):
+                raise serializers.ValidationError({
+                    'repartidor': 'Solo aplica a envios locales (contraentrega Santa Cruz).',
+                })
         return attrs
+
+    def update(self, instance, validated_data):
+        estado_anterior = (instance.estado_envio or '').lower()
+        nuevo_estado = validated_data.get('estado_envio')
+        instance = super().update(instance, validated_data)
+        if nuevo_estado is not None:
+            estado_nuevo = (instance.estado_envio or '').lower()
+            if estado_nuevo == 'en_camino' and estado_anterior != 'en_camino':
+                if not instance.codigo_recepcion:
+                    instance.codigo_recepcion = generar_codigo_recepcion()
+                    instance.save(update_fields=['codigo_recepcion'])
+        elif not instance.codigo_recepcion:
+            estado_actual = (instance.estado_envio or '').lower()
+            if estado_actual in ('en_camino', 'en_ruta', 'despachado'):
+                instance.codigo_recepcion = generar_codigo_recepcion()
+                instance.save(update_fields=['codigo_recepcion'])
+        return instance
+
+
+# Alias retrocompatible
+EnvioEstadoSerializer = EnvioPatchSerializer
