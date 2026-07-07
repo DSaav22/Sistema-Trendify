@@ -14,7 +14,7 @@ const TIPOS_ENVIO = [
 const ESTADOS_SIGUIENTES = {
   preparando: ['en_camino', 'cancelado'],
   procesando: ['en_camino', 'cancelado', 'despachado'],
-  en_camino: ['entregado', 'cancelado'],
+  en_camino: ['entregado', 'cancelado'], // operador puede cerrar como entregado
   en_ruta: ['entregado', 'cancelado'],
   despachado: ['entregado', 'cancelado', 'en_camino'],
 };
@@ -110,7 +110,7 @@ function CrearEnvioModal({ open, onClose, onCreated }) {
       setError('Selecciona una venta.');
       return;
     }
-    if (form.tipo_envio === 'transportadora_interior' && !form.empresa_transporte.trim()) {
+    if (!form.empresa_transporte.trim()) {
       setError('Indica la empresa transportadora.');
       return;
     }
@@ -158,14 +158,25 @@ function CrearEnvioModal({ open, onClose, onCreated }) {
             <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Venta</label>
             <select
               value={form.id_venta}
-              onChange={(ev) => setForm((f) => ({ ...f, id_venta: ev.target.value }))}
+              onChange={(ev) => {
+                const idVenta = ev.target.value;
+                const venta = ventas.find((v) => String(v.id_venta) === String(idVenta));
+                setForm((f) => ({
+                  ...f,
+                  id_venta: idVenta,
+                  tipo_envio: venta?.tipo_envio || f.tipo_envio,
+                  empresa_transporte:
+                    f.empresa_transporte ||
+                    (venta?.tipo_envio === 'transportadora_interior' ? '' : 'Trendify Delivery SCZ'),
+                }));
+              }}
               className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
               disabled={loadingVentas || saving}
             >
               <option value="">Seleccionar...</option>
               {ventas.map((v) => (
                 <option key={v.id_venta} value={v.id_venta}>
-                  #{v.id_venta} — {v.cliente_nombre} — {formatCurrency(v.monto_total)}
+                  #{v.id_venta} — {v.cliente_nombre}{v.ciudad ? ` — ${v.ciudad}` : ''} — {formatCurrency(v.monto_total)}
                 </option>
               ))}
             </select>
@@ -194,7 +205,7 @@ function CrearEnvioModal({ open, onClose, onCreated }) {
               type="text"
               value={form.empresa_transporte}
               onChange={(ev) => setForm((f) => ({ ...f, empresa_transporte: ev.target.value }))}
-              placeholder={form.tipo_envio === 'contraentrega_sc' ? 'Opcional (ej. Trendify Delivery)' : 'Obligatorio'}
+              placeholder="Obligatorio (ej. Trendify Delivery, RapidGo)"
               className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
               disabled={saving}
             />
@@ -386,22 +397,27 @@ export default function EnviosManager() {
                       <td className="px-4 py-3 text-slate-700">{envio.empresa_transporte || '-'}</td>
                       <td className="px-4 py-3 text-slate-700">
                         {puedeAsignarRepartidor(envio.tipo_envio) ? (
-                          <div className="flex flex-col gap-1">
-                            <span className="text-xs">{envio.repartidor || 'Sin asignar'}</span>
+                          bloqueado ? (
+                            <span className="text-xs font-medium text-slate-700">
+                              {envio.repartidor || 'Sin asignar'}
+                            </span>
+                          ) : (
                             <select
-                              className="max-w-[140px] rounded border border-slate-200 px-1 py-0.5 text-xs"
-                              defaultValue=""
+                              className="max-w-[160px] rounded border border-slate-200 px-1 py-1 text-xs"
+                              value={envio.repartidor || ''}
                               disabled={actualizandoId === envio.id_envio}
                               onChange={(ev) => {
                                 if (ev.target.value) asignarRepartidor(envio, ev.target.value);
                               }}
                             >
-                              <option value="">CU31 Asignar...</option>
+                              <option value="">
+                                {envio.repartidor ? 'CU31 Cambiar...' : 'CU31 Asignar...'}
+                              </option>
                               {REPARTIDORES_SUGERIDOS.map((r) => (
                                 <option key={r} value={r}>{r}</option>
                               ))}
                             </select>
-                          </div>
+                          )
                         ) : (
                           <span className="text-xs text-slate-400">N/A interior</span>
                         )}

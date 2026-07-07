@@ -193,6 +193,8 @@ CREATE TABLE ventas (
     vuelto NUMERIC(12,2),
     numero_comprobante VARCHAR(100),
     imagen_qr_url VARCHAR(255),
+    tipo_envio VARCHAR(30),
+    costo_envio NUMERIC(10,2),
     CONSTRAINT fk_ventas_clientes
         FOREIGN KEY (id_cliente) REFERENCES clientes(id_cliente)
         ON UPDATE CASCADE

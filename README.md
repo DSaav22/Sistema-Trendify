@@ -106,6 +106,7 @@ Ese script ya aplica también:
 - `09_migracion_pago_transacciones.sql` (trazabilidad de pagos)
 - `10_migracion_backfill_clientes_usuario.sql` (vincula usuarios cliente con `clientes`)
 - `11_migracion_envios_ciclo5.sql` (logística: costo, repartidor, código recepción)
+- `13_migracion_ventas_envio_ciclo5.sql` (tipo y costo de envío en ventas online)
 - `12_seed_extension.sql` (pedidos guardados + transacciones de pago demo)
 
 Si `psql` no está en el PATH, usá la ruta completa (ejemplo PostgreSQL 18):
@@ -250,6 +251,18 @@ stripe listen --forward-to http://127.0.0.1:8000/api/public/payments/webhook/str
 ```
 
 El comando `stripe listen` te devuelve un `whsec_...`; úsalo en `STRIPE_WEBHOOK_SECRET`.
+
+### `no existe la columna envios.costo_envio` o `no existe la relación pagos_transacciones` (error 500)
+
+Causa: la base local se creó antes de migraciones recientes (Ciclo 5, pagos, pedidos guardados).
+
+**Solución (aplica migraciones 08–13):**
+
+```powershell
+backend\.venv\Scripts\python.exe backend\scripts\apply_ciclo5_migrations.py
+```
+
+Reiniciá el backend si seguía corriendo y recargá el navegador.
 
 ### `no existe la relación django_content_type` al hacer `migrate --fake`
 

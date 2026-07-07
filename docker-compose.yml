@@ -20,6 +20,7 @@ services:
       - ./backend/db/10_migracion_backfill_clientes_usuario.sql:/docker-entrypoint-initdb.d/08_migracion_backfill_clientes_usuario.sql:ro
       - ./backend/db/11_migracion_envios_ciclo5.sql:/docker-entrypoint-initdb.d/09_migracion_envios_ciclo5.sql:ro
       - ./backend/db/12_seed_extension.sql:/docker-entrypoint-initdb.d/10_seed_extension.sql:ro
+      - ./backend/db/13_migracion_ventas_envio_ciclo5.sql:/docker-entrypoint-initdb.d/11_migracion_ventas_envio_ciclo5.sql:ro
     ports:
       # 5433 en el host evita choque con PostgreSQL local en 5432
       - "5433:5432"

@@ -48,6 +48,14 @@ router.register(r'ventas', VentaViewSet, basename='venta')
 router.register(r'compras', CompraViewSet, basename='compra')
 router.register(r'envios', EnvioViewSet, basename='envio')
 
+urlpatterns_envios_alias = [
+    path(
+        'envios/ventas-sin-envio/',
+        EnvioViewSet.as_view({'get': 'ventas_elegibles'}),
+        name='ventas-sin-envio',
+    ),
+]
+
 public_router = DefaultRouter()
 public_router.register(r'categorias', CategoriaPublicaViewSet, basename='categoria-publica')
 public_router.register(r'marcas', MarcaPublicaViewSet, basename='marca-publica')
@@ -68,9 +76,11 @@ urlpatterns = [
     path('ventas/<int:pk>/recibo/', ReciboVentaView.as_view(), name='venta-recibo'),
     path('public/checkout/', CheckoutPublicoView.as_view(), name='checkout-publico'),
     path('public/rastrear-pedido/', PublicRastreoView.as_view(), name='rastrear-pedido'),
+    path('public/rastreo/', PublicRastreoView.as_view(), name='rastreo-publico'),
     path('public/costo-envio/', CostoEnvioView.as_view(), name='costo-envio'),
     path('public/confirmar-recepcion/', ConfirmarRecepcionView.as_view(), name='confirmar-recepcion'),
     path('public/payments/webhook/stripe/', StripeWebhookView.as_view(), name='webhook-stripe'),
     path('public/', include(public_router.urls)),
+    *urlpatterns_envios_alias,
     path('', include(router.urls)),
 ]

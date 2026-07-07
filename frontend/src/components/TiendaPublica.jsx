@@ -565,6 +565,8 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
           id_producto: item.id_producto,
           cantidad: item.cantidad,
         })),
+        tipo_envio: tipoEnvio,
+        costo_envio: costoEnvio,
       };
 
       const { data } = await api.post(PUBLIC_CHECKOUT_URL, payload, {
@@ -808,6 +810,18 @@ export default function TiendaPublica({ onAccesoPersonal, user, logout, isAuthen
               </button>
               {ultimaVentaId && (
                 <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRastreoForm({ id_venta: String(ultimaVentaId), telefono: cliente.telefono || '', codigo: '' });
+                      setRastreoResult(null);
+                      setRastreoError('');
+                      setMostrarRastrearPedido(true);
+                    }}
+                    className="rounded-lg border border-sky-300 bg-sky-50 px-3 py-1.5 text-xs font-bold text-sky-800 hover:bg-sky-100"
+                  >
+                    Rastrear pedido #{ultimaVentaId}
+                  </button>
                   <a
                     href={buildReciboUrl(ultimaVentaId, 'html')}
                     target="_blank"

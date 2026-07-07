@@ -21,7 +21,12 @@ from rest_framework.response import Response
 import stripe
 
 from .authentication import CustomJWTAuthentication
-from .envio_logistica import calcular_costo_envio, tipo_envio_sugerido
+from .envio_logistica import (
+    calcular_costo_envio,
+    es_venta_online,
+    tipo_envio_sugerido,
+    venta_pago_confirmado,
+)
 
 # Importa modelos y serializers de esta misma app.
 from .models import (
@@ -1241,6 +1246,15 @@ class CheckoutPublicoView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        tipo_envio = (request.data.get('tipo_envio') or '').strip().lower()
+        if not tipo_envio:
+            tipo_envio = tipo_envio_sugerido(ciudad)
+
+        try:
+            costo_envio = Decimal(str(calcular_costo_envio(ciudad, tipo_envio)))
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
         cantidades_por_producto = {}
         for item in carrito:
             id_producto = item.get('id_producto') or item.get('id')
@@ -1324,8 +1338,11 @@ class CheckoutPublicoView(APIView):
 
                 monto_total += subtotal
 
+            monto_total += costo_envio
             venta.monto_total = monto_total
-            venta.save(update_fields=['monto_total'])
+            venta.tipo_envio = tipo_envio
+            venta.costo_envio = costo_envio
+            venta.save(update_fields=['monto_total', 'tipo_envio', 'costo_envio'])
             estado_pago_inicial = (
                 'pendiente_pasarela'
                 if metodo_pago == 'stripe_card'
@@ -1624,26 +1641,31 @@ class EnvioViewSet(BitacoraMixin, viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='ventas-elegibles')
     def ventas_elegibles(self, request):
-        """Ventas completadas sin envio registrado (CU27)."""
+        """Ventas online completadas con pago confirmado y sin envio (CU27)."""
         ids_con_envio = Envio.objects.values_list('id_venta_id', flat=True)
         ventas = (
             Venta.objects
             .filter(estado_venta__iexact='completada')
             .exclude(id_venta__in=ids_con_envio)
             .select_related('id_cliente')
+            .prefetch_related('transacciones_pago')
             .order_by('-fecha_hora')[:100]
         )
-        data = [
-            {
+        data = []
+        for v in ventas:
+            if not es_venta_online(v) or not venta_pago_confirmado(v):
+                continue
+            data.append({
                 'id_venta': v.id_venta,
                 'cliente_nombre': v.id_cliente.nombre_completo,
                 'cliente_telefono': v.id_cliente.telefono,
+                'ciudad': v.id_cliente.ciudad,
                 'monto_total': str(v.monto_total),
                 'fecha_hora': v.fecha_hora,
                 'metodo_pago': v.metodo_pago,
-            }
-            for v in ventas
-        ]
+                'tipo_envio': v.tipo_envio,
+                'costo_envio': str(v.costo_envio) if v.costo_envio is not None else None,
+            })
         return Response(data)
 
 
@@ -1811,6 +1833,12 @@ class ConfirmarRecepcionView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        if (envio.estado_envio or '').strip().lower() != 'en_camino':
+            return Response(
+                {'detail': 'El envio debe estar en camino para confirmar recepcion.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         if not envio.codigo_recepcion:
             return Response(
                 {'detail': 'El envio aun no tiene codigo de recepcion. Debe estar en camino.'},
@@ -1826,6 +1854,18 @@ class ConfirmarRecepcionView(APIView):
         envio.recepcion_confirmada = True
         envio.estado_envio = 'entregado'
         envio.save(update_fields=['recepcion_confirmada', 'estado_envio'])
+
+        usuario_sistema = Usuario.objects.filter(id_usuario=1).first()
+        if usuario_sistema is not None:
+            Bitacora.objects.create(
+                id_usuario=usuario_sistema,
+                accion='CONFIRMACION_RECEPCION',
+                tabla_afectada='envios',
+                registro_afectado_id=envio.pk,
+                detalle=f'Cliente confirmo recepcion del pedido #{venta.id_venta}.',
+                fecha_hora=timezone.now(),
+                direccion_ip=get_client_ip_from_request(request),
+            )
 
         return Response({
             'id_venta': venta.id_venta,

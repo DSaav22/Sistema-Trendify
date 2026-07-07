@@ -217,6 +217,10 @@ class Venta(models.Model):
     )
     numero_comprobante = models.CharField(max_length=100, blank=True, null=True)
     imagen_qr_url = models.CharField(max_length=255, blank=True, null=True)
+    tipo_envio = models.CharField(max_length=30, blank=True, null=True)
+    costo_envio = models.DecimalField(
+        max_digits=10, decimal_places=2, blank=True, null=True
+    )
 
     def __str__(self):
         return f'Venta #{self.id_venta}'

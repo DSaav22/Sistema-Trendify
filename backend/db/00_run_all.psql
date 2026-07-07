@@ -24,6 +24,7 @@ BEGIN;
 \i 10_migracion_backfill_clientes_usuario.sql
 \i 11_migracion_envios_ciclo5.sql
 \i 12_seed_extension.sql
+\i 13_migracion_ventas_envio_ciclo5.sql
 
 COMMIT;
 
