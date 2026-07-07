@@ -26,10 +26,5 @@ RUN SECRET_KEY=build-only ALLOWED_HOSTS=* DEBUG=False \
 
 EXPOSE 8080
 
-# Cloud Run inyecta $PORT. Gunicorn lo respeta via shell.
-CMD exec gunicorn config.wsgi:application \
-    --bind 0.0.0.0:${PORT} \
-    --workers 3 \
-    --timeout 120 \
-    --access-logfile - \
-    --error-logfile -
+# Cloud Run inyecta $PORT. Migraciones SQL idempotentes antes de arrancar.
+CMD python scripts/apply_ciclo5_migrations.py && exec gunicorn config.wsgi:application --bind 0.0.0.0:${PORT} --workers 3 --timeout 120 --access-logfile - --error-logfile -
